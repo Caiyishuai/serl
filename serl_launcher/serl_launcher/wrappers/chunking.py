@@ -1,15 +1,15 @@
 from collections import deque
 from typing import Optional
 
-import gym
-import gym.spaces
+import gymnasium as gym
+import gymnasium.spaces
 import jax
 import numpy as np
 
 
 def stack_obs(obs):
     dict_list = {k: [dic[k] for dic in obs] for k in obs[0]}
-    return jax.tree_map(
+    return jax.tree_util.tree_map(
         lambda x: np.stack(x), dict_list, is_leaf=lambda x: isinstance(x, list)
     )
 
@@ -75,3 +75,11 @@ class ChunkingWrapper(gym.Wrapper):
         obs, info = self.env.reset(**kwargs)
         self.current_obs.extend([obs] * self.obs_horizon)
         return stack_obs(self.current_obs), info
+
+
+def post_stack_obs(obs, obs_horizon=1):
+    if obs_horizon != 1:
+        # TODO: Support proper stacking
+        raise NotImplementedError("Only obs_horizon=1 is supported for now")
+    obs = {k: v[None] for k, v in obs.items()}
+    return obs

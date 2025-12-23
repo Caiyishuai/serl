@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from serl_launcher.vision.film_conditioning_layer import FilmConditioning
-
+from serl_launcher.vision.data_augmentations import resize
 ModuleDef = Any
 
 
@@ -205,6 +205,7 @@ class ResNetEncoder(nn.Module):
     use_film: bool = False
     bottleneck_dim: Optional[int] = None
     pre_pooling: bool = True
+    image_size: tuple = (128, 128)
 
     @nn.compact
     def __call__(
@@ -216,8 +217,10 @@ class ResNetEncoder(nn.Module):
     ):
         # put inputs in [-1, 1]
         # x = observations.astype(jnp.float32) / 127.5 - 1.0
+        if observations.shape[-3:-1] != self.image_size:
+            observations = resize(observations, self.image_size)
 
-        # imagenet mean and std
+        # imagenet mean and std # TODO: add this back
         mean = jnp.array([0.485, 0.456, 0.406])
         std = jnp.array([0.229, 0.224, 0.225])
         x = (observations.astype(jnp.float32) / 255.0 - mean) / std
@@ -281,9 +284,9 @@ class ResNetEncoder(nn.Module):
                     )(cond_var)
                     x_mult = jnp.expand_dims(jnp.expand_dims(cond_out, 1), 1)
                     x = x * x_mult
-
         if self.pre_pooling:
             return jax.lax.stop_gradient(x)
+            # return x
 
         if self.pooling_method == "spatial_learned_embeddings":
             height, width, channel = x.shape[-3:]
@@ -385,6 +388,9 @@ resnetv1_configs = {
     ),
     "resnetv1-18": ft.partial(
         ResNetEncoder, stage_sizes=(2, 2, 2, 2), block_cls=ResNetBlock
+    ),
+    "resnetv1-18-frozen": ft.partial(
+        ResNetEncoder, stage_sizes=(2, 2, 2, 2), block_cls=ResNetBlock, pre_pooling=True
     ),
     "resnetv1-34": ft.partial(
         ResNetEncoder, stage_sizes=(3, 4, 6, 3), block_cls=ResNetBlock

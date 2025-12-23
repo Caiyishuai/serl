@@ -1,10 +1,10 @@
 from pathlib import Path
 from typing import Any, Literal, Tuple, Dict
 
-import gym
+import gymnasium as gym
 import mujoco
 import numpy as np
-from gym import spaces
+from gymnasium import spaces
 
 try:
     import mujoco_py
@@ -36,8 +36,10 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         render_spec: GymRenderingSpec = GymRenderingSpec(),
         render_mode: Literal["rgb_array", "human"] = "rgb_array",
         image_obs: bool = False,
+        reward_type: str = "dense",
     ):
         self._action_scale = action_scale
+        self.reward_type = reward_type
 
         super().__init__(
             xml_path=_XML_PATH,
@@ -220,6 +222,9 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         rew = self._compute_reward()
         terminated = self.time_limit_exceeded()
 
+        if self.reward_type == "binary" and rew == 1.0:
+            terminated = True
+
         return obs, rew, terminated, False, {}
 
     def render(self):
@@ -247,6 +252,18 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         )
         obs["state"]["panda/gripper_pos"] = gripper_pos
 
+        if self.image_obs:
+            obs["images"] = {}
+            obs["images"]["front"], obs["images"]["wrist"] = self.render()
+        else:
+            block_pos = self._data.sensor("block_pos").data.astype(np.float32)
+            obs["state"]["block_pos"] = block_pos
+
+        if self.render_mode == "human":
+            self._viewer.render(self.render_mode)
+            pass
+
+
         # joint_pos = np.stack(
         #     [self._data.sensor(f"panda/joint{i}_pos").data for i in range(1, 8)],
         # ).ravel()
@@ -264,21 +281,15 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
 
         # wrist_force = self._data.sensor("panda/wrist_force").data.astype(np.float32)
         # obs["panda/wrist_force"] = symlog(wrist_force.astype(np.float32))
-
-        if self.image_obs:
-            obs["images"] = {}
-            obs["images"]["front"], obs["images"]["wrist"] = self.render()
-        else:
-            block_pos = self._data.sensor("block_pos").data.astype(np.float32)
-            obs["state"]["block_pos"] = block_pos
-
-        if self.render_mode == "human":
-            self._viewer.render(self.render_mode)
-
         return obs
 
     def _compute_reward(self) -> float:
         block_pos = self._data.sensor("block_pos").data
+        if self.reward_type == "binary":
+            if block_pos[2] >= self._z_success:
+                return 1.0
+            return 0.0
+
         tcp_pos = self._data.sensor("2f85/pinch_pos").data
         dist = np.linalg.norm(block_pos - tcp_pos)
         r_close = np.exp(-20 * dist)

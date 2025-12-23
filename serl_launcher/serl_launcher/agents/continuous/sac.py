@@ -1,6 +1,5 @@
-import copy
 from functools import partial
-from typing import Optional, Tuple, FrozenSet
+from typing import Iterable, Optional, Tuple, FrozenSet
 
 import chex
 import distrax
@@ -16,6 +15,7 @@ from serl_launcher.common.typing import Batch, Data, Params, PRNGKey
 from serl_launcher.networks.actor_critic_nets import Critic, Policy, ensemblize
 from serl_launcher.networks.lagrange import GeqLagrangeMultiplier
 from serl_launcher.networks.mlp import MLP
+from serl_launcher.utils.train_utils import _unpack
 
 
 class SACAgent(flax.struct.PyTreeNode):
@@ -55,6 +55,21 @@ class SACAgent(flax.struct.PyTreeNode):
         )
 
     def forward_target_critic(
+        self,
+        observations: Data,
+        actions: jax.Array,
+        rng: PRNGKey,
+    ) -> jax.Array:
+        """
+        Forward pass for target critic network.
+        Pass grad_params to use non-default parameters (e.g. for gradients).
+        """
+        return self.forward_critic(
+            observations, actions, rng=rng, grad_params=self.state.target_params
+        )
+
+    @jax.jit
+    def jitted_forward_target_critic(
         self,
         observations: Data,
         actions: jax.Array,
@@ -186,6 +201,7 @@ class SACAgent(flax.struct.PyTreeNode):
             "critic_loss": critic_loss,
             "predicted_qs": jnp.mean(predicted_qs),
             "target_qs": jnp.mean(target_qs),
+            "rewards": batch["rewards"].mean(),
         }
 
         return critic_loss, info
@@ -232,7 +248,7 @@ class SACAgent(flax.struct.PyTreeNode):
             grad_params=params,
         )
         return temperature_loss, {"temperature_loss": temperature_loss}
-
+    
     def loss_fns(self, batch):
         return {
             "critic": partial(self.critic_loss_fn, batch),
@@ -245,10 +261,11 @@ class SACAgent(flax.struct.PyTreeNode):
         self,
         batch: Batch,
         *,
-        pmap_axis: str = None,
+        pmap_axis: Optional[str] = None,
         networks_to_update: FrozenSet[str] = frozenset(
             {"actor", "critic", "temperature"}
         ),
+        **kwargs
     ) -> Tuple["SACAgent", dict]:
         """
         Take one gradient step on all (or a subset) of the networks in the agent.
@@ -266,8 +283,18 @@ class SACAgent(flax.struct.PyTreeNode):
         batch_size = batch["rewards"].shape[0]
         chex.assert_tree_shape_prefix(batch, (batch_size,))
 
+        if self.config["image_keys"][0] not in batch["next_observations"]:
+            batch = _unpack(batch)
+        rng, aug_rng = jax.random.split(self.state.rng)
+        if "augmentation_function" in self.config.keys() and self.config["augmentation_function"] is not None:
+            batch = self.config["augmentation_function"](batch, aug_rng)
+
+        batch = batch.copy(
+            add_or_replace={"rewards": batch["rewards"] + self.config["reward_bias"]}
+        )
+
         # Compute gradients and update params
-        loss_fns = self.loss_fns(batch)
+        loss_fns = self.loss_fns(batch, **kwargs)
 
         # Only compute gradients for specified steps
         assert networks_to_update.issubset(
@@ -285,7 +312,6 @@ class SACAgent(flax.struct.PyTreeNode):
             new_state = new_state.target_update(self.config["soft_target_update_rate"])
 
         # Update RNG
-        rng, _ = jax.random.split(self.state.rng)
         new_state = new_state.replace(rng=rng)
 
         # Log learning rates
@@ -297,6 +323,70 @@ class SACAgent(flax.struct.PyTreeNode):
                 info[f"{name}_lr"] = opt_state.hyperparams["learning_rate"]
 
         return self.replace(state=new_state), info
+
+    @partial(jax.jit, static_argnames=("utd_ratio", "pmap_axis"))
+    def update_high_utd(
+        self,
+        batch: Batch,
+        *,
+        utd_ratio: int,
+        pmap_axis: Optional[str] = None,
+    ) -> Tuple["SACAgent", dict]:
+        """
+        Fast JITted high-UTD version of `.update`.
+
+        Splits the batch into minibatches, performs `utd_ratio` critic
+        (and target) updates, and then one actor/temperature update.
+
+        Batch dimension must be divisible by `utd_ratio`.
+        """
+        batch_size = batch["rewards"].shape[0]
+        chex.assert_tree_shape_prefix(batch, (batch_size,))
+        if batch_size % utd_ratio != 0:
+             raise ValueError(f"Batch size {batch_size} must be divisible by utd_ratio {utd_ratio}")
+
+        if self.config["image_keys"][0] not in batch["next_observations"]:
+            batch = _unpack(batch)
+
+        # reshape batch to (utd_ratio, batch_size // utd_ratio, ...)
+        batch = jax.tree_util.tree_map(
+            lambda x: x.reshape((utd_ratio, batch_size // utd_ratio) + x.shape[1:]),
+            batch
+        )
+
+        def scan_body(agent, x):
+            i, sub_batch = x
+            
+            def update_all(agent, sub_batch):
+                return agent.update(sub_batch, pmap_axis=pmap_axis)
+            
+            def update_critic(agent, sub_batch):
+                new_agent, info = agent.update(sub_batch, pmap_axis=pmap_axis, networks_to_update=frozenset({"critic"}))
+                # Pad info to match update_all structure
+                info["actor"] = {
+                    "actor_loss": 0.0,
+                    "temperature": 0.0,
+                    "entropy": 0.0,
+                }
+                info["temperature"] = {
+                    "temperature_loss": 0.0
+                }
+                return new_agent, info
+            
+            new_agent, info = jax.lax.cond(
+                i == utd_ratio - 1,
+                lambda a, b: update_all(a, b),
+                lambda a, b: update_critic(a, b),
+                agent,
+                sub_batch
+            )
+            return new_agent, info
+
+        new_agent, infos = jax.lax.scan(scan_body, self, (jnp.arange(utd_ratio), batch))
+        
+        # Return info from the last step
+        last_info = jax.tree_util.tree_map(lambda x: x[-1], infos)
+        return new_agent, last_info
 
     @partial(jax.jit, static_argnames=("argmax",))
     def sample_actions(
@@ -314,7 +404,6 @@ class SACAgent(flax.struct.PyTreeNode):
 
         dist = self.forward_policy(observations, rng=seed, train=False)
         if argmax:
-            assert seed is None, "Cannot specify seed when sampling deterministically"
             return dist.mode()
         else:
             return dist.sample(seed=seed)
@@ -332,11 +421,9 @@ class SACAgent(flax.struct.PyTreeNode):
         # Optimizer
         actor_optimizer_kwargs={
             "learning_rate": 3e-4,
-            "warmup_steps": 2000,
         },
         critic_optimizer_kwargs={
             "learning_rate": 3e-4,
-            "warmup_steps": 2000,
         },
         temperature_optimizer_kwargs={
             "learning_rate": 3e-4,
@@ -349,6 +436,10 @@ class SACAgent(flax.struct.PyTreeNode):
         backup_entropy: bool = False,
         critic_ensemble_size: int = 2,
         critic_subsample_size: Optional[int] = None,
+        image_keys: Iterable[str] = None,
+        augmentation_function: Optional[callable] = None,
+        reward_bias: float = 0.0,
+        **kwargs,
     ):
         networks = {
             "actor": actor_def,
@@ -396,6 +487,10 @@ class SACAgent(flax.struct.PyTreeNode):
                 soft_target_update_rate=soft_target_update_rate,
                 target_entropy=target_entropy,
                 backup_entropy=backup_entropy,
+                image_keys=image_keys,
+                reward_bias=reward_bias,
+                augmentation_function=augmentation_function,
+                **kwargs,
             ),
         )
 
@@ -406,8 +501,7 @@ class SACAgent(flax.struct.PyTreeNode):
         observations: Data,
         actions: jnp.ndarray,
         # Model architecture
-        encoder_def: nn.Module,
-        shared_encoder: bool = True,
+        encoder_type: str = "resnet-pretrained",
         use_proprio: bool = False,
         critic_network_kwargs: dict = {
             "hidden_dims": [256, 256],
@@ -422,6 +516,8 @@ class SACAgent(flax.struct.PyTreeNode):
         critic_ensemble_size: int = 2,
         critic_subsample_size: Optional[int] = None,
         temperature_init: float = 1.0,
+        image_keys: Iterable[str] = ("image",),
+        augmentation_function: Optional[callable] = None,
         **kwargs,
     ):
         """
@@ -431,32 +527,54 @@ class SACAgent(flax.struct.PyTreeNode):
         policy_network_kwargs["activate_final"] = True
         critic_network_kwargs["activate_final"] = True
 
-        encoder_def = EncodingWrapper(
-            encoder=encoder_def,
-            use_proprio=use_proprio,
-            stop_gradient=False,
-            enable_stacking=True,
-        )
+        if encoder_type == "resnet":
+            from serl_launcher.vision.resnet_v1 import resnetv1_configs
 
-        if shared_encoder:
             encoders = {
-                "actor": encoder_def,
-                "critic": encoder_def,
+                image_key: resnetv1_configs["resnetv1-10"](
+                    pooling_method="spatial_learned_embeddings",
+                    num_spatial_blocks=8,
+                    bottleneck_dim=256,
+                    name=f"encoder_{image_key}",
+                )
+                for image_key in image_keys
+            }
+        elif encoder_type == "resnet-pretrained":
+            from serl_launcher.vision.resnet_v1 import (
+                PreTrainedResNetEncoder,
+                resnetv1_configs,
+            )
+
+            pretrained_encoder = resnetv1_configs["resnetv1-10-frozen"](
+                pre_pooling=True,
+                name="pretrained_encoder",
+            )
+            encoders = {
+                image_key: PreTrainedResNetEncoder(
+                    pooling_method="spatial_learned_embeddings",
+                    num_spatial_blocks=8,
+                    bottleneck_dim=256,
+                    pretrained_encoder=pretrained_encoder,
+                    name=f"encoder_{image_key}",
+                )
+                for image_key in image_keys
             }
         else:
-            encoders = {
-                "actor": encoder_def,
-                "critic": copy.deepcopy(encoder_def),
-            }
+            raise NotImplementedError(f"Unknown encoder type: {encoder_type}")
+
+        encoder_def = EncodingWrapper(
+            encoder=encoders,
+            use_proprio=use_proprio,
+            enable_stacking=True,
+            image_keys=image_keys,
+        )
+
+        encoders = {
+            "critic": encoder_def,
+            "actor": encoder_def,
+        }
 
         # Define networks
-        policy_def = Policy(
-            encoder=encoders["actor"],
-            network=MLP(**policy_network_kwargs),
-            action_dim=actions.shape[-1],
-            **policy_kwargs,
-            name="actor",
-        )
         critic_backbone = partial(MLP, **critic_network_kwargs)
         critic_backbone = ensemblize(critic_backbone, critic_ensemble_size)(
             name="critic_ensemble"
@@ -464,64 +582,15 @@ class SACAgent(flax.struct.PyTreeNode):
         critic_def = partial(
             Critic, encoder=encoders["critic"], network=critic_backbone
         )(name="critic")
-        temperature_def = GeqLagrangeMultiplier(
-            init_value=temperature_init,
-            constraint_shape=(),
-            constraint_type="geq",
-            name="temperature",
-        )
 
-        return cls.create(
-            rng,
-            observations,
-            actions,
-            actor_def=policy_def,
-            critic_def=critic_def,
-            temperature_def=temperature_def,
-            critic_ensemble_size=critic_ensemble_size,
-            critic_subsample_size=critic_subsample_size,
-            **kwargs,
-        )
-
-    @classmethod
-    def create_states(
-        cls,
-        rng: PRNGKey,
-        observations: Data,
-        actions: jnp.ndarray,
-        # Model architecture
-        critic_network_kwargs: dict = {
-            "hidden_dims": [256, 256],
-        },
-        critic_ensemble_size: int = 2,
-        critic_subsample_size: Optional[int] = None,
-        policy_network_kwargs: dict = {
-            "hidden_dims": [256, 256],
-        },
-        policy_kwargs: dict = {
-            "tanh_squash_distribution": True,
-            "std_parameterization": "uniform",
-        },
-        temperature_init: float = 1.0,
-        **kwargs,
-    ):
-        """
-        Create a new stage-based agent, with no encoders.
-        """
-
-        policy_network_kwargs["activate_final"] = True
-        critic_network_kwargs["activate_final"] = True
-
-        # Define networks
         policy_def = Policy(
-            encoder=None,
+            encoder=encoders["actor"],
             network=MLP(**policy_network_kwargs),
             action_dim=actions.shape[-1],
             **policy_kwargs,
             name="actor",
         )
-        critic_cls = partial(Critic, encoder=None, network=MLP(**critic_network_kwargs))
-        critic_def = ensemblize(critic_cls, critic_ensemble_size)(name="critic")
+
         temperature_def = GeqLagrangeMultiplier(
             init_value=temperature_init,
             constraint_shape=(),
@@ -529,7 +598,7 @@ class SACAgent(flax.struct.PyTreeNode):
             name="temperature",
         )
 
-        return cls.create(
+        agent = cls.create(
             rng,
             observations,
             actions,
@@ -538,59 +607,13 @@ class SACAgent(flax.struct.PyTreeNode):
             temperature_def=temperature_def,
             critic_ensemble_size=critic_ensemble_size,
             critic_subsample_size=critic_subsample_size,
+            image_keys=image_keys,
+            augmentation_function=augmentation_function,
             **kwargs,
         )
 
-    @partial(jax.jit, static_argnames=("utd_ratio", "pmap_axis"))
-    def update_high_utd(
-        self,
-        batch: Batch,
-        *,
-        utd_ratio: int,
-        pmap_axis: Optional[str] = None,
-    ) -> Tuple["SACAgent", dict]:
-        """
-        Fast JITted high-UTD version of `.update`.
+        if "pretrained" in encoder_type:  # load pretrained weights for ResNet-10
+            from serl_launcher.utils.train_utils import load_resnet10_params
+            agent = load_resnet10_params(agent, image_keys)
 
-        Splits the batch into minibatches, performs `utd_ratio` critic
-        (and target) updates, and then one actor/temperature update.
-
-        Batch dimension must be divisible by `utd_ratio`.
-        """
-        batch_size = batch["rewards"].shape[0]
-        assert (
-            batch_size % utd_ratio == 0
-        ), f"Batch size {batch_size} must be divisible by UTD ratio {utd_ratio}"
-        minibatch_size = batch_size // utd_ratio
-        chex.assert_tree_shape_prefix(batch, (batch_size,))
-
-        def scan_body(carry: Tuple[SACAgent], data: Tuple[Batch]):
-            (agent,) = carry
-            (minibatch,) = data
-            agent, info = agent.update(
-                minibatch, pmap_axis=pmap_axis, networks_to_update=frozenset({"critic"})
-            )
-            return (agent,), info
-
-        def make_minibatch(data: jnp.ndarray):
-            return jnp.reshape(data, (utd_ratio, minibatch_size) + data.shape[1:])
-
-        minibatches = jax.tree_map(make_minibatch, batch)
-
-        (agent,), critic_infos = jax.lax.scan(scan_body, (self,), (minibatches,))
-
-        critic_infos = jax.tree_map(lambda x: jnp.mean(x, axis=0), critic_infos)
-        del critic_infos["actor"]
-        del critic_infos["temperature"]
-
-        # Take one gradient descent step on the actor and temperature
-        agent, actor_temp_infos = agent.update(
-            batch,
-            pmap_axis=pmap_axis,
-            networks_to_update=frozenset({"actor", "temperature"}),
-        )
-        del actor_temp_infos["critic"]
-
-        infos = {**critic_infos, **actor_temp_infos}
-
-        return agent, infos
+        return agent

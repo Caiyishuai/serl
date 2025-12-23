@@ -3,6 +3,7 @@ import pickle as pkl
 import requests
 from collections import defaultdict
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 import imageio
 import jax
@@ -11,7 +12,40 @@ import numpy as np
 import tensorflow as tf
 import wandb
 from flax.core import frozen_dict
+from flax.training import checkpoints
 
+def ask_for_frame(images_dict):    
+    # Create a new figure
+    fig, axes = plt.subplots(5, 5, figsize=(15, 20))
+    
+    # Flatten the axes array for easier indexing
+    axes = axes.flatten()
+    for i, (idx, img) in enumerate(images_dict.items()):
+        # Display the image
+        axes[i].imshow(img)
+        
+        # Remove axis ticks
+        axes[i].set_xticks([])
+        axes[i].set_yticks([])
+        
+        # Overlay the index number
+        axes[i].text(10, 30, str(idx), color='white', fontsize=12, 
+                     bbox=dict(facecolor='black', alpha=0.7))
+    
+    plt.tight_layout()
+    plt.show(block=False)
+
+    while True:
+        try:
+            first_success = int(input("First success frame number: "))
+            assert first_success in images_dict.keys()
+            break
+        except:
+            continue
+
+    plt.close(fig)
+    
+    return first_success
 
 def concat_batches(offline_batch, online_batch, axis=1):
     batch = defaultdict(list)
@@ -108,7 +142,7 @@ def load_resnet10_params(agent, image_keys=("image",), public=True):
         with open(file_path, "rb") as f:
             encoder_params = pkl.load(f)
 
-    param_count = sum(x.size for x in jax.tree_leaves(encoder_params))
+    param_count = sum(x.size for x in jax.tree_util.tree_leaves(encoder_params))
     print(
         f"Loaded {param_count/1e6}M parameters from ResNet-10 pretrained on ImageNet-1K"
     )

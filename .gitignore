@@ -160,6 +160,9 @@ cython_debug/
 #.idea/
 
 *.mp4
+*.avi
+*.gif
+!docs/images/*.gif
 
 # Ignore Python files
 *.pyc
@@ -171,4 +174,7 @@ MUJOCO_LOG.TXT
 *.pkl
 _METADATA
 checkpoint
+checkpoints/
+checkpoints_saved/
 wandb/
+tools/data/

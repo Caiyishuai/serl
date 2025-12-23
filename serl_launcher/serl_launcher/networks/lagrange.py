@@ -29,6 +29,8 @@ class LagrangeMultiplier(nn.Module):
                 init_value = jnp.log(jnp.exp(init_value) - 1)
             elif self.parameterization == "exp":
                 init_value = jnp.log(init_value)
+            elif self.parameterization == "none":
+                pass
             else:
                 raise ValueError(
                     f"Invalid multiplier parameterization {self.parameterization}"
@@ -49,6 +51,8 @@ class LagrangeMultiplier(nn.Module):
                 multiplier = nn.softplus(multiplier)
             elif self.parameterization == "exp":
                 multiplier = jnp.exp(multiplier)
+            elif self.parameterization == "none":
+                pass
             else:
                 raise ValueError(
                     f"Invalid multiplier parameterization {self.parameterization}"
@@ -79,5 +83,9 @@ GeqLagrangeMultiplier = partial(
 )
 
 LeqLagrangeMultiplier = partial(
-    LagrangeMultiplier, constraint_type="leq", parametrization="softplus"
+    LagrangeMultiplier, constraint_type="leq", parameterization="softplus"
+)
+
+BetterLeqLagrangeMultiplier = partial(
+    LagrangeMultiplier, constraint_type="leq", parameterization="none"
 )

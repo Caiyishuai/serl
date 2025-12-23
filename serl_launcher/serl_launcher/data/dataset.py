@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax.core import frozen_dict
-from gym.utils import seeding
+from gymnasium.utils import seeding
 
 DataType = Union[np.ndarray, Dict[str, "DataType"]]
 DatasetDict = Dict[str, DataType]
@@ -118,7 +118,7 @@ class Dataset(object):
                 return (
                     rng,
                     indx.max(),
-                    jax.tree_map(lambda d: jnp.take(d, indx, axis=0), src),
+                    jax.tree_util.tree_map(lambda d: jnp.take(d, indx, axis=0), src),
                 )
 
             self._sample_jax = _sample_jax

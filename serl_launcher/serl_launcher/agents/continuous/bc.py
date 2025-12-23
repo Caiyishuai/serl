@@ -38,10 +38,9 @@ class BCAgent(flax.struct.PyTreeNode):
         if self.config["image_keys"][0] not in batch["next_observations"]:
             batch = _unpack(batch)
 
-        # rng = self.state.rng
-        # rng, obs_rng, next_obs_rng = jax.random.split(rng, 3)
-        # obs = self.data_augmentation_fn(obs_rng, batch["observations"])
-        # batch = batch.copy(add_or_replace={"observations": obs})
+        rng, aug_rng = jax.random.split(self.state.rng)
+        if "augmentation_function" in self.config.keys() and self.config["augmentation_function"] is not None:
+            batch = self.config["augmentation_function"](batch, aug_rng)
 
         def loss_fn(params, rng):
             rng, key = jax.random.split(rng)
@@ -54,18 +53,17 @@ class BCAgent(flax.struct.PyTreeNode):
                 name="actor",
             )
             pi_actions = dist.mode()
-            log_probs = dist.log_prob(batch["actions"])
-            mse = ((pi_actions - batch["actions"]) ** 2).sum(-1)
+            if self.config["tanh_squash_distribution"]:
+                batch_actions = jnp.clip(batch["actions"], -1+1e-6, 1-1e-6)
+            else:
+                batch_actions = batch["actions"]
+            log_probs = dist.log_prob(batch_actions)
+            mse = ((pi_actions - batch_actions) ** 2).sum(-1)
             actor_loss = -(log_probs).mean()
-            actor_std = dist.stddev().mean(axis=1)
 
             return actor_loss, {
                 "actor_loss": actor_loss,
                 "mse": mse.mean(),
-                # "log_probs": log_probs,
-                # "pi_actions": pi_actions,
-                # "mean_std": actor_std.mean(),
-                # "max_std": actor_std.max(),
             }
 
         # compute gradients and update params
@@ -74,6 +72,17 @@ class BCAgent(flax.struct.PyTreeNode):
         )
 
         return self.replace(state=new_state), info
+    
+    def forward_policy(self, observations: np.ndarray, *, temperature: float = 1.0, non_squash_distribution: bool = False):
+        dist = self.state.apply_fn(
+            {"params": self.state.params},
+            observations,
+            train=False,
+            temperature=temperature,
+            name="actor",
+            non_squash_distribution=non_squash_distribution
+        )
+        return dist
 
     @partial(jax.jit, static_argnames="argmax")
     def sample_actions(
@@ -105,8 +114,12 @@ class BCAgent(flax.struct.PyTreeNode):
             name="actor",
         )
         pi_actions = dist.mode()
-        log_probs = dist.log_prob(batch["actions"])
-        mse = ((pi_actions - batch["actions"]) ** 2).sum(-1)
+        if self.config["tanh_squash_distribution"]:
+            batch_actions = jnp.clip(batch["actions"], -1+1e-6, 1-1e-6)
+        else:
+            batch_actions = batch["actions"]
+        log_probs = dist.log_prob(batch_actions)
+        mse = ((pi_actions - batch_actions) ** 2).sum(-1)
 
         return {
             "mse": mse,
@@ -121,7 +134,7 @@ class BCAgent(flax.struct.PyTreeNode):
         observations: FrozenDict,
         actions: jnp.ndarray,
         # Model architecture
-        encoder_type: str = "small",
+        encoder_type: str = "resnet-pretrained",
         image_keys: Iterable[str] = ("image",),
         use_proprio: bool = False,
         network_kwargs: dict = {
@@ -132,24 +145,9 @@ class BCAgent(flax.struct.PyTreeNode):
         },
         # Optimizer
         learning_rate: float = 3e-4,
+        augmentation_function: Optional[callable] = None,
     ):
-        if encoder_type == "small":
-            from serl_launcher.vision.small_encoders import SmallEncoder
-
-            encoders = {
-                image_key: SmallEncoder(
-                    features=(32, 64, 128, 256),
-                    kernel_sizes=(3, 3, 3, 3),
-                    strides=(2, 2, 2, 2),
-                    padding="VALID",
-                    pool_method="avg",
-                    bottleneck_dim=256,
-                    spatial_block_size=8,
-                    name=f"encoder_{image_key}",
-                )
-                for image_key in image_keys
-            }
-        elif encoder_type == "resnet":
+        if encoder_type == "resnet":
             from serl_launcher.vision.resnet_v1 import resnetv1_configs
 
             encoders = {
@@ -218,13 +216,14 @@ class BCAgent(flax.struct.PyTreeNode):
         )
         config = dict(
             image_keys=image_keys,
+            augmentation_function=augmentation_function,
+            tanh_squash_distribution=policy_kwargs["tanh_squash_distribution"],
         )
 
         agent = cls(state, config)
 
         if encoder_type == "resnet-pretrained":  # load pretrained weights for ResNet-10
             from serl_launcher.utils.train_utils import load_resnet10_params
-
             agent = load_resnet10_params(agent, image_keys)
 
         return agent

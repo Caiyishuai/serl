@@ -50,6 +50,7 @@ class DrQAgent(SACAgent):
         critic_ensemble_size: int = 2,
         critic_subsample_size: Optional[int] = None,
         image_keys: Iterable[str] = ("image",),
+        reward_bias: float = 0.0,
     ):
         networks = {
             "actor": actor_def,
@@ -98,6 +99,7 @@ class DrQAgent(SACAgent):
                 target_entropy=target_entropy,
                 backup_entropy=backup_entropy,
                 image_keys=image_keys,
+                reward_bias=reward_bias,
             ),
         )
 
@@ -125,6 +127,7 @@ class DrQAgent(SACAgent):
         critic_subsample_size: Optional[int] = None,
         temperature_init: float = 1.0,
         image_keys: Iterable[str] = ("image",),
+        reward_bias: float = 0.0,
         **kwargs,
     ):
         """
@@ -231,6 +234,7 @@ class DrQAgent(SACAgent):
             critic_ensemble_size=critic_ensemble_size,
             critic_subsample_size=critic_subsample_size,
             image_keys=image_keys,
+            reward_bias=reward_bias,
             **kwargs,
         )
 

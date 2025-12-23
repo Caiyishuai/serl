@@ -2,7 +2,7 @@ import math
 from collections import defaultdict
 from typing import Dict
 
-import gym
+import gymnasium as gym
 import jax
 import numpy as np
 
@@ -96,63 +96,6 @@ def evaluate_with_trajectories(
     for k, v in stats.items():
         stats[k] = np.mean(v)
     return stats, trajectories
-
-
-def evaluate_gc(
-    policy_fn,
-    env: gym.Env,
-    num_episodes: int,
-    return_trajectories: bool = False,
-) -> Dict[str, float]:
-    stats = defaultdict(list)
-
-    if return_trajectories:
-        trajectories = []
-
-    for _ in range(num_episodes):
-        if return_trajectories:
-            trajectory = defaultdict(list)
-
-        observation, info = env.reset()
-        goal = info["goal"]
-        add_to(stats, flatten(filter_info(info)))
-        done = False
-
-        while not done:
-            action = policy_fn(observation, goal)
-            next_observation, r, terminated, truncated, info = env.step(action)
-            goal = info["goal"]
-            done = terminated or truncated
-            transition = dict(
-                observation=observation,
-                next_observation=next_observation,
-                goal=goal,
-                action=action,
-                reward=r,
-                done=done,
-                info=info,
-            )
-
-            add_to(stats, flatten(filter_info(info)))
-
-            if return_trajectories:
-                add_to(trajectory, transition)
-
-            observation = next_observation
-
-        add_to(stats, flatten(filter_info(info), parent_key="final"))
-        if return_trajectories:
-            trajectory["steps_remaining"] = list(
-                np.arange(len(trajectory["action"]))[::-1]
-            )
-            trajectories.append(trajectory)
-
-    stats = {k: np.mean(v) for k, v in stats.items() if not isinstance(v[0], str)}
-
-    if return_trajectories:
-        return stats, trajectories
-    else:
-        return stats
 
 
 def bootstrap_std(arr, f=np.mean, n=30):
