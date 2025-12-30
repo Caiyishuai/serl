@@ -299,9 +299,9 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         # if self.reward_type == "binary":
         # print((block_pos[2] - self._z_init))
         # print((block_pos[2] - self._z_init), (self._z_success - self._z_init))
-        if r_close>0.5 and (block_pos[2] - self._z_init) >= (self._z_success - self._z_init):
-            return 1.0
-        return 0.0
+        # if r_close>0.5 and (block_pos[2] - self._z_init) >= (self._z_success - self._z_init):
+        #     return 1.0
+        # return 0.0
 
         return rew
 

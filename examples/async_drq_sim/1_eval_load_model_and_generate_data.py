@@ -50,11 +50,11 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("env", "PandaPickCubeVision-v0", "Name of environment.")
 flags.DEFINE_string("checkpoint_path", None, "Path to the checkpoint directory.")
-flags.DEFINE_string("reward_type", "binary", "Reward type: 'dense' or 'binary'.")
+flags.DEFINE_string("reward_type", "dense", "Reward type: 'dense' or 'binary'.")
 flags.DEFINE_boolean("save_trajs", True, "Whether to save trajectories.")
 flags.DEFINE_boolean("save_success_only", False, "Whether to save only successful trajectories.")
 flags.DEFINE_integer("num_episodes", 150, "Number of episodes to evaluate.")
-flags.DEFINE_string("output_path", os.path.join(os.path.dirname(__file__), "success_trajs_{}_40cm_01_reward.pkl"), "Path to save the collected data. Use {} as placeholder for num_episodes.")
+flags.DEFINE_string("output_path", os.path.join(os.path.dirname(__file__), "success_trajs_{}_40cm_dense_reward.pkl"), "Path to save the collected data. Use {} as placeholder for num_episodes.")
 flags.DEFINE_string("fail_output_path", os.path.join(os.path.dirname(__file__), "fail_trajs_{}_40cm_01_reward.pkl"), "Path to save the failed trajectories. Use {} as placeholder for num_episodes.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_string("encoder_type", "resnet-pretrained", "Encoder type.")
@@ -217,6 +217,8 @@ def main(_):
             # If reward_type is binary, reward=1.0 means success
             # If dense, we rely on the same check if needed, but here assuming binary logic
             if FLAGS.reward_type == "binary" and reward == 1.0:
+                episode_success = True
+            elif FLAGS.reward_type == "dense" and reward > 0.8:
                 episode_success = True
             
             obs = next_obs
