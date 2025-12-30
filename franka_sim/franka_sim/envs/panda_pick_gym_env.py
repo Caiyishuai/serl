@@ -36,7 +36,7 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         render_spec: GymRenderingSpec = GymRenderingSpec(),
         render_mode: Literal["rgb_array", "human"] = "rgb_array",
         image_obs: bool = False,
-        reward_type: str = "dense",
+        reward_type: str = "dense", #"dense" or "01"
     ):
         self._action_scale = action_scale
         self.reward_type = reward_type
@@ -222,8 +222,8 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         rew = self._compute_reward()
         terminated = self.time_limit_exceeded()
 
-        if self.reward_type == "binary" and rew == 1.0:
-            terminated = True
+        # if self.reward_type == "binary" and rew == 1.0:
+        #     terminated = True
 
         return obs, rew, terminated, False, {}
 

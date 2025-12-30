@@ -66,11 +66,14 @@ flags.DEFINE_integer("target_success_count", 20, "Target number of successful tr
 flags.DEFINE_integer("target_fail_count", 0, "Target number of failed trajectories to collect.")
 
 def main(_):
-    if not FLAGS.checkpoint_path:
-        # Fallback if flag is somehow None
-        FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints_saved_80cm_max40cm/checkpoint_396000"
-        # FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints/checkpoint_118000"
-        # FLAGS.checkpoint_path="random_checkpoint"
+    FLAGS.reward_type = "dense" # "dense" or "01"
+    FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints_saved_80cm_max40cm/checkpoint_396000"
+    # FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints/checkpoint_118000"
+    # FLAGS.checkpoint_path="random_checkpoint"
+
+    FLAGS.output_path = os.path.join(os.path.dirname(__file__), "success_trajs_{}_{reward_type}.pkl")
+    FLAGS.fail_output_path = os.path.join(os.path.dirname(__file__), "fail_trajs_{}_{reward_type}.pkl")
+
 
     # Use GPU if available
     if jax.default_backend() == "cpu":
@@ -216,7 +219,7 @@ def main(_):
             # Check success
             # If reward_type is binary, reward=1.0 means success
             # If dense, we rely on the same check if needed, but here assuming binary logic
-            if FLAGS.reward_type == "binary" and reward == 1.0:
+            if FLAGS.reward_type == "01" and reward == 1.0:
                 episode_success = True
             elif FLAGS.reward_type == "dense" and reward > 0.8:
                 episode_success = True
@@ -257,12 +260,12 @@ def main(_):
                 video_writer.write(img_bgr)
                 
                 # If paused on success, write the same frame multiple times to pause in video too
-                if FLAGS.pause_on_success and FLAGS.reward_type == "binary" and reward == 1.0:
+                if FLAGS.pause_on_success and ((FLAGS.reward_type == "01" and reward == 1.0) or (FLAGS.reward_type == "dense" and reward > 0.8)):
                     # Pause for 0.5s = 10 frames at 20fps
                     for _ in range(10):
                         video_writer.write(img_bgr)
 
-            if FLAGS.pause_on_success and FLAGS.reward_type == "binary" and reward == 1.0 and FLAGS.render:
+            if FLAGS.pause_on_success and ((FLAGS.reward_type == "01" and reward == 1.0) or (FLAGS.reward_type == "dense" and reward > 0.8)) and FLAGS.render:
                 cv2.waitKey(500) # 500ms = 0.5s
 
         if episode_success:
