@@ -222,7 +222,14 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         rew = self._compute_reward()
         terminated = self.time_limit_exceeded()
 
-        # if self.reward_type == "binary" and rew == 1.0:
+        if rew == 1.0:
+            terminated = True
+
+        # block_pos = self._data.sensor("block_pos").data
+        # tcp_pos = self._data.sensor("2f85/pinch_pos").data
+        # dist = np.linalg.norm(block_pos - tcp_pos)
+        # r_close = np.exp(-20 * dist)
+        # if r_close>0.5 and (block_pos[2] - self._z_init) >= (self._z_success - self._z_init):
         #     terminated = True
 
         return obs, rew, terminated, False, {}
@@ -299,11 +306,11 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         # if self.reward_type == "binary":
         # print((block_pos[2] - self._z_init))
         # print((block_pos[2] - self._z_init), (self._z_success - self._z_init))
-        # if r_close>0.5 and (block_pos[2] - self._z_init) >= (self._z_success - self._z_init):
-        #     return 1.0
-        # return 0.0
+        if r_close>0.5 and (block_pos[2] - self._z_init) >= (self._z_success - self._z_init):
+            return 1.0
+        return 0.0
 
-        return rew
+        # return rew
 
 
 if __name__ == "__main__":

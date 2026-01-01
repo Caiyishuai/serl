@@ -13,7 +13,7 @@ export DISPLAY=:0 && \
 # xxx
 python async_drq_sim.py "$@" \
     --actor \
-    --exp_name=baseline_dense_reward_with_demo_40cm_bt=128 \
+    --exp_name=baseline_01reward_no_demo_40cm_bt=128 \
     --seed 0 \
     --random_steps 1000 \
     --encoder_type resnet-pretrained \

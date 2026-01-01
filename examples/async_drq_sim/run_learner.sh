@@ -23,18 +23,29 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=.5 && \
 export MUJOCO_GL=egl && \
 export WANDB_API_KEY=5f07bbe343d183f389c30a3a6245463dca80ae0e && \
 # Option 2: Use default wandb login (if already logged in system)
+# python async_drq_sim.py "$@" \
+#     --learner \
+#     --render   \
+#     --exp_name=baseline_dense_reward_with_demo_40cm_bt=128 \
+#     --seed 0 \
+#     --training_starts 1000 \
+#     --critic_actor_ratio 4 \
+#     --encoder_type resnet-pretrained \
+#     --demo_path success_trajs_20_40cm_dense_reward.pkl \
+    # --debug # wandb is disabled when debug
+
 python async_drq_sim.py "$@" \
     --learner \
     --render   \
-    --exp_name=baseline_dense_reward_with_demo_40cm_bt=128 \
+    --exp_name=baseline_01reward_no_demo_40cm_bt=128 \
     --seed 0 \
     --training_starts 1000 \
     --critic_actor_ratio 4 \
     --encoder_type resnet-pretrained \
-    # --demo_path success_trajs_20_40cm_dense_reward.pkl \
+    --demo_path success_trajs_20_40cm_dense_reward.pkl \
     # --debug # wandb is disabled when debug
 
-
+    
 # python async_drq_sim_new_reward.py "$@" \
 #     --learner \
 #     --render   \

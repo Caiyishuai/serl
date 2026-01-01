@@ -54,7 +54,7 @@ flags.DEFINE_string("reward_type", "dense", "Reward type: 'dense' or 'binary'.")
 flags.DEFINE_boolean("save_trajs", True, "Whether to save trajectories.")
 flags.DEFINE_boolean("save_success_only", False, "Whether to save only successful trajectories.")
 flags.DEFINE_integer("num_episodes", 150, "Number of episodes to evaluate.")
-flags.DEFINE_string("output_path", os.path.join(os.path.dirname(__file__), "success_trajs_{}_40cm_dense_reward.pkl"), "Path to save the collected data. Use {} as placeholder for num_episodes.")
+flags.DEFINE_string("output_path", os.path.join(os.path.dirname(__file__), "success_trajs_{}_40cm_01_reward.pkl"), "Path to save the collected data. Use {} as placeholder for num_episodes.")
 flags.DEFINE_string("fail_output_path", os.path.join(os.path.dirname(__file__), "fail_trajs_{}_40cm_01_reward.pkl"), "Path to save the failed trajectories. Use {} as placeholder for num_episodes.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_string("encoder_type", "resnet-pretrained", "Encoder type.")
@@ -62,7 +62,7 @@ flags.DEFINE_boolean("render", False, "Whether to render the environment.")
 flags.DEFINE_boolean("save_video", True, "Whether to save the evaluation video.")
 flags.DEFINE_string("video_path", os.path.join(os.path.dirname(__file__), "eval_video.mp4"), "Path to save the video.")
 flags.DEFINE_boolean("pause_on_success", True, "Whether to pause for 0.5s on success.")
-flags.DEFINE_integer("target_success_count", 20, "Target number of successful trajectories to collect.")
+flags.DEFINE_integer("target_success_count", 100, "Target number of successful trajectories to collect.")
 flags.DEFINE_integer("target_fail_count", 0, "Target number of failed trajectories to collect.")
 
 def main(_):
@@ -71,8 +71,8 @@ def main(_):
     # FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints/checkpoint_118000"
     # FLAGS.checkpoint_path="random_checkpoint"
 
-    FLAGS.output_path = os.path.join(os.path.dirname(__file__), "success_trajs_{}_{reward_type}.pkl")
-    FLAGS.fail_output_path = os.path.join(os.path.dirname(__file__), "fail_trajs_{}_{reward_type}.pkl")
+    FLAGS.output_path = os.path.join(os.path.dirname(__file__), f"success_trajs_{FLAGS.target_success_count}_{FLAGS.reward_type}.pkl")
+    FLAGS.fail_output_path = os.path.join(os.path.dirname(__file__), f"fail_trajs_{FLAGS.target_fail_count}_{FLAGS.reward_type}.pkl")
 
 
     # Use GPU if available
@@ -259,13 +259,13 @@ def main(_):
                     video_writer = cv2.VideoWriter(FLAGS.video_path, fourcc, 20.0, (width, height))
                 video_writer.write(img_bgr)
                 
-                # If paused on success, write the same frame multiple times to pause in video too
-                if FLAGS.pause_on_success and ((FLAGS.reward_type == "01" and reward == 1.0) or (FLAGS.reward_type == "dense" and reward > 0.8)):
+                # If paused on last step, write the same frame multiple times to pause in video too
+                if FLAGS.pause_on_success and (done or truncated):
                     # Pause for 0.5s = 10 frames at 20fps
                     for _ in range(10):
                         video_writer.write(img_bgr)
 
-            if FLAGS.pause_on_success and ((FLAGS.reward_type == "01" and reward == 1.0) or (FLAGS.reward_type == "dense" and reward > 0.8)) and FLAGS.render:
+            if FLAGS.pause_on_success and (done or truncated) and FLAGS.render:
                 cv2.waitKey(500) # 500ms = 0.5s
 
         if episode_success:
