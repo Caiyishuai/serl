@@ -31,7 +31,7 @@ python async_drq_sim.py "$@" \
     --training_starts 1000 \
     --critic_actor_ratio 4 \
     --encoder_type resnet-pretrained \
-    --demo_path success_trajs_20_40cm_dense_reward.pkl \
+    # --demo_path success_trajs_20_40cm_dense_reward.pkl \
     # --debug # wandb is disabled when debug
 
 
