@@ -139,8 +139,6 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
             dtype=np.float32,
         )
 
-        # NOTE: gymnasium is used here since MujocoRenderer is not available in gym. It
-        # is possible to add a similar viewer feature with gym, but that can be a future TODO
         from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 
         self._viewer = MujocoRenderer(

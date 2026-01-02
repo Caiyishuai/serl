@@ -1,10 +1,14 @@
 from pathlib import Path
 from typing import Any, Literal, Tuple, Dict
-
+import copy
+import pickle
 import gymnasium as gym
 import mujoco
 import numpy as np
 from gymnasium import spaces
+import os
+
+ROOT_PATH = os.path.dirname(os.path.abspath(__file__))
 
 try:
     import mujoco_py
@@ -17,13 +21,11 @@ from franka_sim.controllers import opspace
 from franka_sim.mujoco_gym_env import GymRenderingSpec, MujocoGymEnv
 
 _HERE = Path(__file__).parent
-_XML_PATH = _HERE / "xmls" / "arena_stack.xml"
+_XML_PATH = _HERE / "../franka_sim/franka_sim/envs/xmls" / "arena_stack.xml"
 _PANDA_HOME = np.asarray((0, -0.785, 0, -2.35, 0, 1.57, np.pi / 4))
 _CARTESIAN_BOUNDS = np.asarray([[0.2, -0.3, 0], [0.6, 0.3, 0.5]])
-# Pillar (green) sampling bounds - front half (negative Y)
-_PILLAR_SAMPLING_BOUNDS = np.asarray([[0.35, -0.25], [0.50, -0.05]])
-# Block sampling bounds - back half (positive Y)
-_BLOCK_SAMPLING_BOUNDS = np.asarray([[0.35, 0.05], [0.50, 0.25]])
+_SAMPLING_BOUNDS = np.asarray([[0.25, -0.25], [0.55, 0.25]])
+
 
 class PandaStackGymEnv(MujocoGymEnv):
     metadata = {"render_modes": ["rgb_array", "human"]}
@@ -38,7 +40,7 @@ class PandaStackGymEnv(MujocoGymEnv):
         render_spec: GymRenderingSpec = GymRenderingSpec(),
         render_mode: Literal["rgb_array", "human"] = "rgb_array",
         image_obs: bool = False,
-        reward_type: str = "dense",  # "dense" or "01"
+        reward_type: str = "dense",
     ):
         self._action_scale = action_scale
         self.reward_type = reward_type
@@ -74,7 +76,6 @@ class PandaStackGymEnv(MujocoGymEnv):
         self._gripper_ctrl_id = self._model.actuator("fingers_actuator").id
         self._pinch_site_id = self._model.site("pinch").id
         self._block_z = self._model.geom("block").size[2]
-        self._pillar_z = self._model.geom("target_pillar").size[2]
 
         state_space = {
             "panda/tcp_pos": spaces.Box(
@@ -166,13 +167,9 @@ class PandaStackGymEnv(MujocoGymEnv):
         tcp_pos = self._data.sensor("2f85/pinch_pos").data
         self._data.mocap_pos[0] = tcp_pos
 
-        # Sample a new block position (right half).
-        block_xy = np.random.uniform(*_BLOCK_SAMPLING_BOUNDS)
+        # Sample a new block position.
+        block_xy = np.random.uniform(*_SAMPLING_BOUNDS)
         self._data.jnt("block").qpos[:3] = (*block_xy, self._block_z)
-
-        # Sample a new pillar position (left half).
-        pillar_xy = np.random.uniform(*_PILLAR_SAMPLING_BOUNDS)
-        self._data.jnt("target_pillar").qpos[:3] = (*pillar_xy, self._pillar_z)
 
         mujoco.mj_forward(self._model, self._data)
 
@@ -265,7 +262,6 @@ class PandaStackGymEnv(MujocoGymEnv):
 
         if self.render_mode == "human":
             self._viewer.render(self.render_mode)
-            pass
 
         return obs
 
@@ -280,51 +276,201 @@ class PandaStackGymEnv(MujocoGymEnv):
         SAFE_LIFT_HEIGHT = PILLAR_HEIGHT + 0.05  # 0.13m
 
         # Phase 1: Lift
-        # Encourage gripper to reach block
         dist_tcp_block = np.linalg.norm(block_pos - tcp_pos)
         r_reach = (1 - np.tanh(10.0 * dist_tcp_block))
 
-        # Encourage lifting block to SAFE_LIFT_HEIGHT
-        # block_z starts at 0.02
         z_score = (block_pos[2] - 0.02) / (SAFE_LIFT_HEIGHT - 0.02)
         r_lift = np.clip(z_score, 0.0, 1.0)
 
         # Phase 2: Place
-        # Target is top of pillar.
-        # Pillar center z is 0.04. Top is 0.08.
-        # Block center z when stacked should be 0.08 + 0.02 = 0.10.
-        # Calculate distance between block bottom and pillar top
         block_bottom_z = block_pos[2] - BLOCK_HEIGHT / 2
         pillar_top_z = pillar_pos[2] + PILLAR_HEIGHT / 2
         target_pos = pillar_pos.copy()
         target_pos[2] = pillar_top_z
         
-        # Horizontal distance (x, y)
         dist_xy = np.linalg.norm(block_pos[:2] - target_pos[:2])
-        # Vertical distance (z) - block bottom to pillar top
         dist_z = block_bottom_z - pillar_top_z
-        # Total distance considering both horizontal and vertical
         dist_block_target = np.sqrt(dist_xy**2 + dist_z**2)
         r_place = (1 - np.tanh(5.0 * dist_block_target))
 
         # Combine phases
-        # If block is not high enough, focus on lift
         if block_pos[2] < SAFE_LIFT_HEIGHT:
-            # Phase 1
-            # Reward in [0, 1]
             rew = 0.2 * r_reach + 0.8 * r_lift
         else:
-            # Phase 2
-            # Reward in [1, 2]
             rew = 1.0 + r_place
 
         return rew
 
 
+# 运动规划参数
+lower_limit = -0.1
+upper_limit = 0.1
+max_dis = 0.5
+min_dis = 0.05
+
+
+def step_collect_data(env, action, data_list, last_observations=None, task_stage=None):
+    """执行一步并收集数据"""
+    obs, rew, done, truncated, info = env.step(action)
+    data_dict = {
+        'observations': last_observations,
+        'actions': action,
+        'next_observations': obs,
+        'rewards': rew,
+        'masks': 1 - done,
+        'dones': truncated or done,
+    }
+    
+    if task_stage is not None:
+        data_dict['task_stage'] = task_stage
+        
+    data_list.append(data_dict)
+    return obs
+
+
+def go_to_target(env, target_pos, data_list, task_stage=None):
+    """移动到目标位置"""
+    obs = env._compute_observation()
+    while True:
+        delta_pos = np.clip(target_pos - obs["state"]["panda/tcp_pos"], lower_limit, upper_limit)
+        dis = np.linalg.norm(obs["state"]["panda/tcp_pos"] - target_pos)
+        dis = np.clip(dis, min_dis, max_dis)
+        
+        dis_ratio = (dis - min_dis) / (max_dis - min_dis)
+        norm_delta_pos = delta_pos * (0.1 + dis_ratio * 2.5)
+
+        action = np.concatenate([norm_delta_pos, [0]])
+        obs = step_collect_data(env, action, data_list, last_observations=obs, task_stage=task_stage)
+        # 移除 env.render() 调用，因为在 human 模式下已经在 _compute_observation 中渲染
+
+        if np.linalg.norm(obs["state"]["panda/tcp_pos"] - target_pos) < 0.05:
+            break
+    
+    return obs
+
+
+def close_gripper(env, data_list, task_stage=None):
+    """关闭夹爪"""
+    obs = env._compute_observation()
+    action = np.array([0, 0, 0, 1])
+    for _ in range(10):  # 执行固定步数确保夹爪完全闭合
+        last_gripper_pos = obs["state"]["panda/gripper_pos"]
+        obs = step_collect_data(env, action, data_list, last_observations=obs, task_stage=task_stage)
+        # 移除 env.render() 调用
+        if np.abs(obs["state"]["panda/gripper_pos"] - last_gripper_pos) < 0.005:
+            break
+    return obs
+
+
+def open_gripper(env, data_list, task_stage=None):
+    """打开夹爪"""
+    obs = env._compute_observation()
+    action = np.array([0, 0, 0, -1])
+    for _ in range(10):  # 执行固定步数确保夹爪完全打开
+        last_gripper_pos = obs["state"]["panda/gripper_pos"]
+        obs = step_collect_data(env, action, data_list, last_observations=obs, task_stage=task_stage)
+        # 移除 env.render() 调用
+        if np.abs(obs["state"]["panda/gripper_pos"] - last_gripper_pos) < 0.005:
+            break
+    return obs
+
+
 if __name__ == "__main__":
+    
+    print(f"ROOT_PATH: {ROOT_PATH}")
+    
+    max_transition_data_num = 20  # 收集的轨迹数量
+    transition_data_list = []
+    
+    # 使用 human 模式进行可视化
+    # 渲染会在 _compute_observation 中自动完成，不需要手动调用 render()
     env = PandaStackGymEnv(render_mode="human")
-    env.reset()
-    for i in range(100):
-        env.step(np.random.uniform(-1, 1, 4))
-        env.render()
+    
+    for i in range(max_transition_data_num):
+        print(f"\n=== 收集轨迹 {i+1}/{max_transition_data_num} ===")
+        env.reset()
+        
+        data_list = []
+        obs = env._compute_observation()
+        
+        # 获取物体和目标位置
+        block_pos = obs["state"]["block_pos"].copy()
+        pillar_pos = obs["state"]["target_pillar_pos"].copy()
+        
+        print(f"Block position: {block_pos}")
+        print(f"Pillar position: {pillar_pos}")
+        
+        # ========== 阶段 0: 移动到 block 上方 ==========
+        target = block_pos.copy()
+        target[2] += 0.05  # 在 block 上方 5cm
+        print(f"阶段 0: 移动到 block 上方 {target}")
+        go_to_target(env, target, data_list, task_stage=0)
+        
+        # ========== 阶段 1: 下降到 block ==========
+        target[2] = block_pos[2] - 0.02  # 稍微低于 block 中心
+        print(f"阶段 1: 下降到 block {target}")
+        go_to_target(env, target, data_list, task_stage=1)
+        
+        # ========== 阶段 2: 关闭夹爪抓取 ==========
+        print(f"阶段 2: 关闭夹爪")
+        close_gripper(env, data_list, task_stage=2)
+        
+        # ========== 阶段 3: 抬起 block 到安全高度 ==========
+        SAFE_LIFT_HEIGHT = 0.15  # 15cm 安全高度
+        target = obs["state"]["panda/tcp_pos"].copy()
+        target[2] = SAFE_LIFT_HEIGHT
+        print(f"阶段 3: 抬起到安全高度 {target}")
+        go_to_target(env, target, data_list, task_stage=3)
+        
+        # ========== 阶段 4: 移动到 pillar 上方 ==========
+        target = pillar_pos.copy()
+        target[2] = SAFE_LIFT_HEIGHT  # 保持安全高度
+        print(f"阶段 4: 移动到 pillar 上方 {target}")
+        go_to_target(env, target, data_list, task_stage=4)
+        
+        # ========== 阶段 5: 下降到 pillar 顶部 ==========
+        PILLAR_HEIGHT = 0.08
+        target[2] = pillar_pos[2] + PILLAR_HEIGHT / 2 + 0.02  # pillar 顶部 + block 半高
+        print(f"阶段 5: 下降到 pillar 顶部 {target}")
+        go_to_target(env, target, data_list, task_stage=5)
+        
+        # ========== 阶段 6: 打开夹爪放下 block ==========
+        print(f"阶段 6: 打开夹爪")
+        open_gripper(env, data_list, task_stage=6)
+        
+        # ========== 阶段 7: 抬起离开 ==========
+        target = obs["state"]["panda/tcp_pos"].copy()
+        target[2] += 0.1  # 上升 10cm
+        print(f"阶段 7: 抬起离开 {target}")
+        go_to_target(env, target, data_list, task_stage=7)
+        
+        print(f"轨迹 {i+1} 收集完成，包含 {len(data_list)} 个转换")
+        transition_data_list.extend(data_list)
+    
+    print(f"\n总共收集了 {len(transition_data_list)} 个转换")
+    
+    # 保存完整数据
+    folder_name = f"{ROOT_PATH}/../../../../data/stack_trajs/panda_stack_{max_transition_data_num}"
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name)
+    
+    with open(f"{folder_name}/demo_data.pkl", "wb") as f:
+        pickle.dump(transition_data_list, f)
+    print(f"保存完整数据到 {folder_name}/demo_data.pkl")
+    
+    # 按阶段保存数据
+    action_agent_num = 8  # 8个阶段
+    action_transition_data = [[] for _ in range(action_agent_num)]
+    
+    for transition_data in transition_data_list:
+        stage = transition_data["task_stage"]
+        action_transition_data[stage].append(transition_data)
+    
+    for i in range(action_agent_num):
+        with open(f"{folder_name}/act_{i}.pkl", "wb") as f:
+            pickle.dump(action_transition_data[i], f)
+        print(f"保存阶段 {i} 数据到 {folder_name}/act_{i}.pkl，包含 {len(action_transition_data[i])} 个转换")
+    
     env.close()
+    print("\n数据收集完成！")
+

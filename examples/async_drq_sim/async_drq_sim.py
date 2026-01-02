@@ -41,9 +41,8 @@ import os
 
 from typing import Any, Dict, Optional
 import pickle as pkl
-# import gymnasium as gym
-import gym
-from gym.wrappers.record_episode_statistics import RecordEpisodeStatistics
+import gymnasium as gym
+from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 
 from serl_launcher.agents.continuous.drq import DrQAgent
 from serl_launcher.common.evaluation import evaluate
@@ -66,11 +65,13 @@ from serl_launcher.wrappers.serl_obs_wrappers import SERLObsWrapper
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../franka_sim"))
 import franka_sim
+# Explicitly import envs to trigger environment registration
+import franka_sim.envs
 
 FLAGS = flags.FLAGS
 
 # flags.DEFINE_string("env", "PandaPickCubeVision-v0", "Name of environment.")
-flags.DEFINE_string("env", "PandaStack-v0", "Name of environment.")
+flags.DEFINE_string("env", "PandaStackVision-v0", "Name of environment.")
 flags.DEFINE_string("agent", "drq", "Name of agent.")
 flags.DEFINE_string("exp_name", None, "Name of the experiment for wandb logging.")
 flags.DEFINE_integer("max_traj_length", 1000, "Maximum length of trajectory.")
@@ -142,7 +143,9 @@ def actor(agent: DrQAgent, data_store, env, sampling_rng):
     client.recv_network_callback(update_params)
 
     eval_env = gym.make(FLAGS.env)
-    if FLAGS.env == "PandaPickCubeVision-v0":
+    if FLAGS.env == "PandaPickCube-v0" or FLAGS.env == "PandaStack-v0":
+        eval_env = gym.wrappers.FlattenObservation(eval_env)
+    if FLAGS.env == "PandaPickCubeVision-v0" or FLAGS.env == "PandaStackVision-v0":
         eval_env = SERLObsWrapper(eval_env)
         eval_env = ChunkingWrapper(eval_env, obs_horizon=1, act_exec_horizon=None)
     eval_env = RecordEpisodeStatistics(eval_env)

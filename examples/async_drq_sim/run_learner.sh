@@ -37,11 +37,12 @@ export WANDB_API_KEY=5f07bbe343d183f389c30a3a6245463dca80ae0e && \
 python async_drq_sim.py "$@" \
     --learner \
     --render   \
-    --exp_name=baseline_01reward_no_demo_40cm_bt=128 \
+    --exp_name=baseline_stack_dense_reward_20_bt=128 \
     --seed 0 \
     --training_starts 1000 \
     --critic_actor_ratio 4 \
-    --encoder_type resnet-pretrained
+    --encoder_type resnet-pretrained \
+    --demo_path stack_trajs_20.pkl \
 
     
 # python async_drq_sim_new_reward.py "$@" \

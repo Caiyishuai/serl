@@ -28,10 +28,9 @@
       <geom name="block" type="box" size=".02 .02 .02" mass="0.1" rgba=".6 .3 .6 1"/>
     </body>
 
-    <body name="target_pillar" pos="0.5 0.2 0.04">
-      <joint name="target_pillar_x" type="slide" axis="1 0 0" damping="100"/>
-      <joint name="target_pillar_y" type="slide" axis="0 1 0" damping="100"/>
-      <geom name="target_pillar" type="box" size=".02 .02 .04" mass="50" rgba="0 1 0 1" friction="2 0.005 0.0001"/>
+    <body name="target_pillar" pos="0.35 0.0 0.04">
+      <freejoint name="target_pillar"/>
+      <geom name="target_pillar" type="box" size=".04 .04 .04" mass="50" rgba="0 1 0 1" friction="2 0.005 0.0001"/>
     </body>
 
     <body name="target" pos=".15 0 .5" quat="0 1 0 0" mocap="true">
