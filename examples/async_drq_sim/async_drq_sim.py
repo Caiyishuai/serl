@@ -43,6 +43,9 @@ from typing import Any, Dict, Optional
 import pickle as pkl
 import gymnasium as gym
 from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
+# import gym
+# from gym.wrappers.record_episode_statistics import RecordEpisodeStatistics
+
 
 from serl_launcher.agents.continuous.drq import DrQAgent
 from serl_launcher.common.evaluation import evaluate
@@ -63,7 +66,8 @@ from serl_launcher.utils.launcher import (
 from serl_launcher.wrappers.serl_obs_wrappers import SERLObsWrapper
 
 import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../franka_sim"))
+# sys.path.append(os.path.join(os.path.dirname(__file__), "../../franka_sim"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../franka_sim"))
 import franka_sim
 # Explicitly import envs to trigger environment registration
 import franka_sim.envs

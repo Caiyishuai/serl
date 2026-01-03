@@ -1,10 +1,10 @@
 from pathlib import Path
 from typing import Any, Literal, Tuple, Dict
 
-import gymnasium as gym
+import gym
 import mujoco
 import numpy as np
-from gymnasium import spaces
+from gym import spaces
 
 try:
     import mujoco_py
@@ -328,7 +328,26 @@ class PandaStackGymEnv(MujocoGymEnv):
             # Reward in [2, 3]
             rew = 2.0 + r_release
 
+        # sparse reward
+        # success = self._check_success()
+        # if success:
+        #     rew = 1.0
+        # else:
+        #     rew = 0.0
+
         return rew
+    
+    def _check_success(self) -> bool:
+        threshold = 0.04
+        block_pos = self._data.sensor("block_pos").data
+        pillar_pos = self._data.sensor("target_pillar_pos").data
+        PILLAR_HEIGHT = 0.08  # pillar 高度
+        BLOCK_HEIGHT = 0.04   # block 高度
+        pillar_top_z = pillar_pos[2] + PILLAR_HEIGHT / 2
+        target_block_z = pillar_top_z + BLOCK_HEIGHT / 2
+        dist_xy = np.linalg.norm(block_pos[:2] - pillar_pos[:2])
+        dist_z = np.abs(block_pos[2] - target_block_z)
+        return (dist_xy < threshold) and (dist_z < threshold) # success
 
 
 if __name__ == "__main__":

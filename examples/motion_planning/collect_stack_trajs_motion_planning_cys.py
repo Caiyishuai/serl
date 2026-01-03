@@ -6,13 +6,10 @@ import pickle
 import numpy as np
 from pathlib import Path
 
-# Import the PandaStackGymEnv from franka_sim
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "franka_sim"))
-from franka_sim.envs.panda_stack_gym_env import PandaStackGymEnv
 
 ROOT_PATH = os.path.dirname(os.path.abspath(__file__))
 
+from franka_sim.envs import PandaStackGymEnv
 # 全局 viewer 用于可视化
 VIEWER = None
 
@@ -82,17 +79,16 @@ def step_collect_data(env, action, data_list, last_observations=None, task_stage
     # 格式化观测
     formatted_obs = format_observation(obs)
     
+    # 创建转换字典 - 只包含 replay buffer 需要的键
     data_dict = {
         'observations': last_observations,
         'actions': action,
         'next_observations': formatted_obs,
-        'rewards': rew,
-        'masks': 1 - done,
-        'dones': truncated or done,
+        'rewards': np.float32(rew),  # 确保是 numpy 标量
+        'masks': float(1 - done),     # float 类型
+        'dones': bool(truncated or done),  # bool 类型
     }
-    
-    if task_stage is not None:
-        data_dict['task_stage'] = task_stage
+    # 注意：不包含 task_stage，因为 replay buffer 不接受额外的键
         
     data_list.append(data_dict)
     return formatted_obs
@@ -209,7 +205,10 @@ def check_success(env, threshold=0.04):
 
 
 def collect_one_trajectory(env):
-    """收集一条完整的 stack 轨迹"""
+    """
+    收集一条完整的 stack 轨迹
+    返回：转换列表，每个转换包含 observations, actions, next_observations, rewards, masks, dones
+    """
     data_list = []
     
     # 重置环境
@@ -278,7 +277,7 @@ def collect_one_trajectory(env):
     # 最终检查成功
     is_success = check_success(env, threshold=0.04)
     
-    return data_list, is_success, initial_object_pos
+    return data_list, is_success
 
 
 def main():
@@ -309,8 +308,8 @@ def main():
             print("将继续收集数据但不显示可视化")
             VIEWER = None
     
-    # 用于存储轨迹的列表
-    trajectories = []
+    # 用于存储所有转换的列表（不是轨迹列表）
+    all_transitions = []
     success_count = 0
     attempt_count = 0
     
@@ -324,29 +323,11 @@ def main():
             print(f"\n=== 尝试 {attempt_count}，已成功 {success_count}/{num_trajectories} ===")
             
             # 收集一条轨迹
-            data_list, is_success, initial_object_pos = collect_one_trajectory(env)
+            data_list, is_success = collect_one_trajectory(env)
             
             if is_success:
-                # 转换为目标格式
-                trajectory = {
-                    'observations': [],
-                    'actions': [],
-                    'rewards': [],
-                    'next_observations': [],
-                    'dones': [],
-                    'infos': [],
-                    'initial_object_pos': initial_object_pos  # shape (2, 3): [block_pos, pillar_pos]
-                }
-                
-                for data in data_list:
-                    trajectory['observations'].append(data['observations'])
-                    trajectory['actions'].append(data['actions'])
-                    trajectory['rewards'].append(data['rewards'])
-                    trajectory['next_observations'].append(data['next_observations'])
-                    trajectory['dones'].append(data['dones'])
-                    trajectory['infos'].append({})
-                
-                trajectories.append(trajectory)
+                # 将这条轨迹的所有转换添加到总列表中
+                all_transitions.extend(data_list)
                 print(f"✓ 轨迹成功！包含 {len(data_list)} 个转换")
                 success_count += 1
             else:
@@ -365,7 +346,7 @@ def main():
     env.close()
     
     # 计算成功率和总转换数
-    total_transitions = sum(len(traj['observations']) for traj in trajectories)
+    total_transitions = len(all_transitions)
     success_rate = (success_count / attempt_count * 100) if attempt_count > 0 else 0
     print(f"\n" + "="*60)
     print(f"数据收集完成！")
@@ -373,16 +354,17 @@ def main():
     print(f"总转换数: {total_transitions}")
     print("="*60)
     
-    if len(trajectories) == 0:
+    if len(all_transitions) == 0:
         print("没有收集到成功数据，退出")
         return
     
-    # 保存为单个pkl文件，放在 async_drq_sim 目录下
-    save_path = os.path.join(ROOT_PATH, "../async_drq_sim", f"stack_trajs_{success_count}.pkl")
+    # 保存为单个pkl文件，放在当前目录下
+    # 数据格式：转换列表，每个转换是一个字典
+    save_path = os.path.join(ROOT_PATH, f"franka_stack_image_{success_count}_trajs_dense.pkl")
     with open(save_path, "wb") as f:
-        pickle.dump(trajectories, f)
+        pickle.dump(all_transitions, f)
     print(f"\n保存数据到: {save_path}")
-    print(f"文件包含 {len(trajectories)} 条轨迹，共 {total_transitions} 个转换")
+    print(f"文件包含 {success_count} 条轨迹，共 {total_transitions} 个转换")
     print("\n数据收集完成！")
 
 

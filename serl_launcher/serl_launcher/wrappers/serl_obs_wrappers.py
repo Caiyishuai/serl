@@ -40,11 +40,11 @@ class SERLObsWrapper(gym.ObservationWrapper):
         return self.observation(obs), info
 
 def flatten_observations(obs, proprio_space, proprio_keys):
-        obs = {
-            "state": flatten(
-                proprio_space,
-                {key: obs["state"][key] for key in proprio_keys},
-            ),
-            **(obs["images"]),
-        }
-        return obs
+    obs = {
+        "state": flatten(
+            proprio_space,
+            {key: obs["state"][key] for key in proprio_keys},
+        ),
+        **(obs["images"]),
+    }
+    return obs
