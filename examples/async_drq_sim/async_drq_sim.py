@@ -41,10 +41,11 @@ import os
 
 from typing import Any, Dict, Optional
 import pickle as pkl
-import gymnasium as gym
-from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
-# import gym
-# from gym.wrappers.record_episode_statistics import RecordEpisodeStatistics
+# import gymnasium as gym
+# from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
+
+import gym
+from gym.wrappers.record_episode_statistics import RecordEpisodeStatistics
 
 
 from serl_launcher.agents.continuous.drq import DrQAgent
@@ -490,18 +491,9 @@ def main(_):
 
                 with open(FLAGS.demo_path, "rb") as f:
                     trajs = pkl.load(f)
+                    # 直接插入transition，不需要展开
                     for traj in trajs:
-                        # 展开轨迹，将每个 step 作为 transition 插入
-                        for i in range(len(traj["actions"])):
-                            transition = dict(
-                                observations=traj["observations"][i],
-                                actions=traj["actions"][i],
-                                next_observations=traj["next_observations"][i],
-                                rewards=traj["rewards"][i],
-                                masks=1.0 - traj["dones"][i],
-                                dones=traj["dones"][i],
-                            )
-                            demo_buffer.insert(transition)
+                        demo_buffer.insert(traj)
 
             print(f"demo buffer size: {len(demo_buffer)}")
         else:

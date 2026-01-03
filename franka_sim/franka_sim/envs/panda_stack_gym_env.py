@@ -321,12 +321,7 @@ class PandaStackGymEnv(MujocoGymEnv):
         elif dist_block_target > PLACE_THRESHOLD:
             # Phase 2: Place (block is high but distance to target > threshold, not placed yet)
             # Reward in [1, 2]
-            rew = 1.0 + r_place
-        else:
-            # Phase 3: Release (distance to target <= threshold, block placed successfully)
-            # Now encourage opening gripper
-            # Reward in [2, 3]
-            rew = 2.0 + r_release
+            rew = 1.0 + r_place + r_release
 
         # sparse reward
         # success = self._check_success()

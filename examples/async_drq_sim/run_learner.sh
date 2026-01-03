@@ -42,7 +42,7 @@ python async_drq_sim.py "$@" \
     --training_starts 1000 \
     --critic_actor_ratio 4 \
     --encoder_type resnet-pretrained \
-    --demo_path stack_trajs_20.pkl \
+    --demo_path franka_stack_image_20_trajs_dense.pkl \
 
     
 # python async_drq_sim_new_reward.py "$@" \
