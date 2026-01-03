@@ -273,11 +273,13 @@ class PandaStackGymEnv(MujocoGymEnv):
         block_pos = self._data.sensor("block_pos").data
         pillar_pos = self._data.sensor("target_pillar_pos").data
         tcp_pos = self._data.sensor("2f85/pinch_pos").data
+        gripper_pos = self._data.ctrl[self._gripper_ctrl_id] / 255  # [0, 1]
 
         # Constants
         PILLAR_HEIGHT = 0.08
         BLOCK_HEIGHT = 0.04
         SAFE_LIFT_HEIGHT = PILLAR_HEIGHT + 0.05  # 0.13m
+        PLACE_THRESHOLD = 0.03  # Distance threshold for successful placement
 
         # Phase 1: Lift
         # Encourage gripper to reach block
@@ -307,16 +309,24 @@ class PandaStackGymEnv(MujocoGymEnv):
         dist_block_target = np.sqrt(dist_xy**2 + dist_z**2)
         r_place = (1 - np.tanh(5.0 * dist_block_target))
 
+        # Phase 3: Release (open gripper)
+        # gripper_pos: 0 = closed, 1 = open
+        r_release = gripper_pos  # Reward for opening gripper
+        
         # Combine phases
-        # If block is not high enough, focus on lift
         if block_pos[2] < SAFE_LIFT_HEIGHT:
-            # Phase 1
+            # Phase 1: Lift (block not high enough)
             # Reward in [0, 1]
             rew = 0.2 * r_reach + 0.8 * r_lift
-        else:
-            # Phase 2
+        elif dist_block_target > PLACE_THRESHOLD:
+            # Phase 2: Place (block is high but distance to target > threshold, not placed yet)
             # Reward in [1, 2]
             rew = 1.0 + r_place
+        else:
+            # Phase 3: Release (distance to target <= threshold, block placed successfully)
+            # Now encourage opening gripper
+            # Reward in [2, 3]
+            rew = 2.0 + r_release
 
         return rew
 
