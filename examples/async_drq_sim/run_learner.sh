@@ -19,7 +19,7 @@ fi
 # export CUDA_VISIBLE_DEVICES=4 && \
 export DISPLAY=:0 && \
 export XLA_PYTHON_CLIENT_PREALLOCATE=false && \
-export XLA_PYTHON_CLIENT_MEM_FRACTION=.5 && \
+export XLA_PYTHON_CLIENT_MEM_FRACTION=.6 && \
 export MUJOCO_GL=egl && \
 export WANDB_API_KEY=5f07bbe343d183f389c30a3a6245463dca80ae0e && \
 # Option 2: Use default wandb login (if already logged in system)
@@ -36,13 +36,14 @@ export WANDB_API_KEY=5f07bbe343d183f389c30a3a6245463dca80ae0e && \
 
 python async_drq_sim.py "$@" \
     --learner \
-    --render   \
-    --exp_name=baseline_stack_dense_reward_20_bt=128 \
+    --exp_name=pick_cube_dense_reward_demo_bt=128_no_render \
     --seed 0 \
     --training_starts 1000 \
     --critic_actor_ratio 4 \
     --encoder_type resnet-pretrained \
-    --demo_path franka_stack_image_20_trajs_dense.pkl \
+    --demo_path franka_lift_cube_image_20_trajs.pkl \
+    # --render   \
+    # --debug
 
     
 # python async_drq_sim_new_reward.py "$@" \

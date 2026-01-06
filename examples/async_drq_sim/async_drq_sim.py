@@ -72,11 +72,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../franka_sim"))
 import franka_sim
 # Explicitly import envs to trigger environment registration
 import franka_sim.envs
+def print_green(x):
+    return print("\033[92m {}\033[00m".format(x))
+
 
 FLAGS = flags.FLAGS
 
-# flags.DEFINE_string("env", "PandaPickCubeVision-v0", "Name of environment.")
-flags.DEFINE_string("env", "PandaStackVision-v0", "Name of environment.")
+flags.DEFINE_string("env", "PandaPickCubeVision-v0", "Name of environment.")
+# flags.DEFINE_string("env", "PandaStackVision-v0", "Name of environment.")
 flags.DEFINE_string("agent", "drq", "Name of agent.")
 flags.DEFINE_string("exp_name", None, "Name of the experiment for wandb logging.")
 flags.DEFINE_integer("max_traj_length", 1000, "Maximum length of trajectory.")
@@ -88,7 +91,7 @@ flags.DEFINE_integer("critic_actor_ratio", 4, "critic to actor update ratio.")
 flags.DEFINE_integer("max_steps", 1000000, "Maximum number of training steps.")
 flags.DEFINE_integer("replay_buffer_capacity", 200000, "Replay buffer capacity.")
 
-flags.DEFINE_integer("random_steps", 300, "Sample random actions for this many steps.")
+flags.DEFINE_integer("random_steps", 1000, "Sample random actions for this many steps.")
 flags.DEFINE_integer("training_starts", 300, "Training starts after this step.")
 flags.DEFINE_integer("steps_per_update", 30, "Number of steps per update the server.")
 
@@ -119,10 +122,8 @@ flags.DEFINE_string("preload_rlds_path", None, "Path to preload RLDS data.")
 devices = jax.local_devices()
 num_devices = len(devices)
 sharding = jax.sharding.PositionalSharding(devices)
+print_green(f"sharding: {sharding}")
 
-
-def print_green(x):
-    return print("\033[92m {}\033[00m".format(x))
 
 
 ##############################################################################
@@ -236,7 +237,7 @@ def learner(
     # WANDB_API_KEY can be set in run_learner.sh temporarily (only affects this script)
     # The entity parameter in wandb.init() only affects this run, not system defaults
     wandb_logger = make_wandb_logger(
-        project="cys_drq_sim",
+        project="test_drq_sim",  # "cys_drq_sim"
         description=FLAGS.exp_name or FLAGS.env,
         debug=FLAGS.debug,
         # entity=None,  # Only affects this run, doesn't change system defaults

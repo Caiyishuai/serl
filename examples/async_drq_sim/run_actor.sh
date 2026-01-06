@@ -13,11 +13,11 @@ export DISPLAY=:0 && \
 # xxx
 python async_drq_sim.py "$@" \
     --actor \
-    --exp_name=baseline_01reward_no_demo_40cm_bt=128 \
+    --exp_name=pick_cube_dense_reward_demo_bt=128_no_render \
     --seed 0 \
     --random_steps 1000 \
     --encoder_type resnet-pretrained \
-    --render
+    # --render
     # --debug
 
 
