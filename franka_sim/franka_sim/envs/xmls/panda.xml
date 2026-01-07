@@ -391,6 +391,7 @@
     <torque name="panda/joint7_torque" site="joint7"/>
 
     <force name="panda/wrist_force" site="attachment_site"/>
+    <torque name="panda/wrist_torque" site="attachment_site"/>
 
     <framepos name="2f85/pinch_pos" objtype="site" objname="pinch"/>
     <framequat name="2f85/pinch_quat" objtype="site" objname="pinch"/>

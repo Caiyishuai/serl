@@ -214,19 +214,25 @@ class PandaPickCubeGymEnvWithForce(MujocoGymEnv):
         rew = self._compute_reward()
         terminated = self.time_limit_exceeded()
 
-        if rew == 1.0:
-            terminated = True
+        # if rew == 1.0:
+        #     terminated = True
 
-        return obs, rew, terminated, False, {}
+        done = False
+        block_pos = self._data.sensor("block_pos").data
+        tcp_pos = self._data.sensor("2f85/pinch_pos").data
+        dist = np.linalg.norm(block_pos - tcp_pos)
+        r_close = np.exp(-20 * dist)
+        if r_close>0.5 and (block_pos[2] - self._z_init) >= (self._z_success - self._z_init):
+            done = True
+
+        return obs, rew, terminated, done, {}
 
     def render(self):
         rendered_frames = []
         for cam_id in self.camera_id:
             frame = self._viewer.render(
                 render_mode="rgb_array",
-                camera_id=cam_id,
-                width=self._render_specs.width,
-                height=self._render_specs.height
+                camera_id=cam_id
             )
             rendered_frames.append(frame)
         return rendered_frames
