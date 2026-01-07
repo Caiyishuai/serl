@@ -36,7 +36,7 @@ export WANDB_API_KEY=5f07bbe343d183f389c30a3a6245463dca80ae0e && \
 
 python async_drq_sim.py "$@" \
     --learner \
-    --exp_name=pick_cube_dense_reward_demo_bt=128_no_render \
+    --exp_name=pick_cube_sparse_reward_demo_bt=128_no_render \
     --seed 0 \
     --training_starts 1000 \
     --critic_actor_ratio 4 \

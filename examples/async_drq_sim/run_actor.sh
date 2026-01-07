@@ -13,7 +13,7 @@ export DISPLAY=:0 && \
 # xxx
 python async_drq_sim.py "$@" \
     --actor \
-    --exp_name=pick_cube_dense_reward_demo_bt=128_no_render \
+    --exp_name=pick_cube_sparse_reward_demo_bt=128_no_render \
     --seed 0 \
     --random_steps 1000 \
     --encoder_type resnet-pretrained \

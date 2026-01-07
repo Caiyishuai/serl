@@ -1,10 +1,10 @@
 from pathlib import Path
 from typing import Any, Literal, Tuple, Dict
 
-import gym
+import gymnasium as gym
 import mujoco
 import numpy as np
-from gym import spaces
+from gymnasium import spaces
 
 try:
     import mujoco_py
@@ -139,13 +139,17 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
             dtype=np.float32,
         )
 
+        # Initialize gymnasium MujocoRenderer with proper dimensions
         from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 
         self._viewer = MujocoRenderer(
             self.model,
             self.data,
+            width=render_spec.width,
+            height=render_spec.height,
         )
-        self._viewer.render(self.render_mode)
+        if self.render_mode == "human":
+            self._viewer.render(self.render_mode)
 
     def reset(
         self, seed=None, **kwargs
@@ -304,9 +308,9 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         # if self.reward_type == "binary":
         # print((block_pos[2] - self._z_init))
         # print((block_pos[2] - self._z_init), (self._z_success - self._z_init))
-        # if r_close>0.5 and (block_pos[2] - self._z_init) >= (self._z_success - self._z_init):
-        #     return 1.0
-        # return 0.0
+        if r_close>0.5 and (block_pos[2] - self._z_init) >= (self._z_success - self._z_init):
+            return 1.0
+        return 0.0
 
         return rew
 

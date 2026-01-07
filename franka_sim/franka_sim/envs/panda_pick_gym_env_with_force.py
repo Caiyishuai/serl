@@ -17,15 +17,14 @@ from franka_sim.controllers import opspace
 from franka_sim.mujoco_gym_env import GymRenderingSpec, MujocoGymEnv
 
 _HERE = Path(__file__).parent
-_XML_PATH = _HERE / "xmls" / "arena_stack.xml"
+_XML_PATH = _HERE / "xmls" / "arena.xml"
 _PANDA_HOME = np.asarray((0, -0.785, 0, -2.35, 0, 1.57, np.pi / 4))
 _CARTESIAN_BOUNDS = np.asarray([[0.2, -0.3, 0], [0.6, 0.3, 0.5]])
-# Pillar (green) sampling bounds - front half (negative Y)
-_PILLAR_SAMPLING_BOUNDS = np.asarray([[0.35, -0.25], [0.50, -0.05]])
-# Block sampling bounds - back half (positive Y)
-_BLOCK_SAMPLING_BOUNDS = np.asarray([[0.35, 0.05], [0.50, 0.25]])
+_SAMPLING_BOUNDS = np.asarray([[0.25, -0.25], [0.55, 0.25]])
 
-class PandaStackGymEnv(MujocoGymEnv):
+
+class PandaPickCubeGymEnvWithForce(MujocoGymEnv):
+    """Panda Pick Cube environment with force and torque sensors."""
     metadata = {"render_modes": ["rgb_array", "human"]}
 
     def __init__(
@@ -74,8 +73,8 @@ class PandaStackGymEnv(MujocoGymEnv):
         self._gripper_ctrl_id = self._model.actuator("fingers_actuator").id
         self._pinch_site_id = self._model.site("pinch").id
         self._block_z = self._model.geom("block").size[2]
-        self._pillar_z = self._model.geom("target_pillar").size[2]
 
+        # Define observation space with force and torque sensors
         state_space = {
             "panda/tcp_pos": spaces.Box(
                 -np.inf, np.inf, shape=(3,), dtype=np.float32
@@ -86,10 +85,13 @@ class PandaStackGymEnv(MujocoGymEnv):
             "panda/gripper_pos": spaces.Box(
                 -np.inf, np.inf, shape=(1,), dtype=np.float32
             ),
-            "block_pos": spaces.Box(
+            "panda/joint_torque": spaces.Box(
+                -np.inf, np.inf, shape=(7,), dtype=np.float32
+            ),
+            "panda/wrist_force": spaces.Box(
                 -np.inf, np.inf, shape=(3,), dtype=np.float32
             ),
-            "target_pillar_pos": spaces.Box(
+            "block_pos": spaces.Box(
                 -np.inf, np.inf, shape=(3,), dtype=np.float32
             ),
         }
@@ -97,22 +99,7 @@ class PandaStackGymEnv(MujocoGymEnv):
         if self.image_obs:
             self.observation_space = gym.spaces.Dict(
                 {
-                    "state": gym.spaces.Dict(
-                        {
-                            "panda/tcp_pos": spaces.Box(
-                                -np.inf, np.inf, shape=(3,), dtype=np.float32
-                            ),
-                            "panda/tcp_vel": spaces.Box(
-                                -np.inf, np.inf, shape=(3,), dtype=np.float32
-                            ),
-                            "panda/gripper_pos": spaces.Box(
-                                -np.inf, np.inf, shape=(1,), dtype=np.float32
-                            ),
-                            "target_pillar_pos": spaces.Box(
-                                -np.inf, np.inf, shape=(3,), dtype=np.float32
-                            ),
-                        }
-                    ),
+                    "state": gym.spaces.Dict(state_space),
                     "images": gym.spaces.Dict(
                         {
                             "front": gym.spaces.Box(
@@ -144,6 +131,7 @@ class PandaStackGymEnv(MujocoGymEnv):
             dtype=np.float32,
         )
 
+        # Initialize gymnasium MujocoRenderer with proper dimensions
         from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 
         self._viewer = MujocoRenderer(
@@ -169,15 +157,14 @@ class PandaStackGymEnv(MujocoGymEnv):
         tcp_pos = self._data.sensor("2f85/pinch_pos").data
         self._data.mocap_pos[0] = tcp_pos
 
-        # Sample a new block position (right half).
-        block_xy = np.random.uniform(*_BLOCK_SAMPLING_BOUNDS)
+        # Sample a new block position.
+        block_xy = np.random.uniform(*_SAMPLING_BOUNDS)
         self._data.jnt("block").qpos[:3] = (*block_xy, self._block_z)
-
-        # Sample a new pillar position (left half).
-        pillar_xy = np.random.uniform(*_PILLAR_SAMPLING_BOUNDS)
-        self._data.jnt("target_pillar").qpos[:3] = (*pillar_xy, self._pillar_z)
-
         mujoco.mj_forward(self._model, self._data)
+
+        # Cache the initial block height.
+        self._z_init = self._data.sensor("block_pos").data[2]
+        self._z_success = self._z_init + 0.4  # 0.2, 0.4
 
         obs = self._compute_observation()
         return obs, {}
@@ -229,6 +216,9 @@ class PandaStackGymEnv(MujocoGymEnv):
         rew = self._compute_reward()
         terminated = self.time_limit_exceeded()
 
+        if rew == 1.0:
+            terminated = True
+
         return obs, rew, terminated, False, {}
 
     def render(self):
@@ -245,113 +235,62 @@ class PandaStackGymEnv(MujocoGymEnv):
         obs = {}
         obs["state"] = {}
 
+        # TCP position and velocity
         tcp_pos = self._data.sensor("2f85/pinch_pos").data
         obs["state"]["panda/tcp_pos"] = tcp_pos.astype(np.float32)
 
         tcp_vel = self._data.sensor("2f85/pinch_vel").data
         obs["state"]["panda/tcp_vel"] = tcp_vel.astype(np.float32)
 
+        # Gripper position
         gripper_pos = np.array(
             self._data.ctrl[self._gripper_ctrl_id] / 255, dtype=np.float32
         )
         obs["state"]["panda/gripper_pos"] = gripper_pos
 
-        pillar_pos = self._data.sensor("target_pillar_pos").data.astype(np.float32)
-        obs["state"]["target_pillar_pos"] = pillar_pos
+        # Joint torques (7 joints)
+        joint_torque = np.stack(
+            [self._data.sensor(f"panda/joint{i}_torque").data for i in range(1, 8)],
+        ).ravel()
+        obs["state"]["panda/joint_torque"] = joint_torque.astype(np.float32)
 
+        # Wrist force sensor (3D force)
+        wrist_force = self._data.sensor("panda/wrist_force").data.astype(np.float32)
+        obs["state"]["panda/wrist_force"] = wrist_force
+
+        # Block position (always included, even with image_obs)
+        block_pos = self._data.sensor("block_pos").data.astype(np.float32)
+        obs["state"]["block_pos"] = block_pos
+
+        # Add images if image_obs is enabled
         if self.image_obs:
             obs["images"] = {}
             obs["images"]["front"], obs["images"]["wrist"] = self.render()
-        else:
-            block_pos = self._data.sensor("block_pos").data.astype(np.float32)
-            obs["state"]["block_pos"] = block_pos
 
         if self.render_mode == "human":
             self._viewer.render(self.render_mode)
-            pass
 
         return obs
 
     def _compute_reward(self) -> float:
         block_pos = self._data.sensor("block_pos").data
-        pillar_pos = self._data.sensor("target_pillar_pos").data
         tcp_pos = self._data.sensor("2f85/pinch_pos").data
-        gripper_pos = self._data.ctrl[self._gripper_ctrl_id] / 255  # [0, 1]
+        dist = np.linalg.norm(block_pos - tcp_pos)
+        r_close = np.exp(-20 * dist)
+        r_lift = (block_pos[2] - self._z_init) / (self._z_success - self._z_init)
+        r_lift = np.clip(r_lift, 0.0, 1.0)
+        rew = 0.3 * r_close + 0.7 * r_lift
 
-        # Constants
-        PILLAR_HEIGHT = 0.08
-        BLOCK_HEIGHT = 0.04
-        SAFE_LIFT_HEIGHT = PILLAR_HEIGHT + 0.05  # 0.13m
-        PLACE_THRESHOLD = 0.03  # Distance threshold for successful placement
-
-        # Phase 1: Lift
-        # Encourage gripper to reach block
-        dist_tcp_block = np.linalg.norm(block_pos - tcp_pos)
-        r_reach = (1 - np.tanh(10.0 * dist_tcp_block))
-
-        # Encourage lifting block to SAFE_LIFT_HEIGHT
-        # block_z starts at 0.02
-        z_score = (block_pos[2] - 0.02) / (SAFE_LIFT_HEIGHT - 0.02)
-        r_lift = np.clip(z_score, 0.0, 1.0)
-
-        # Phase 2: Place
-        # Target is top of pillar.
-        # Pillar center z is 0.04. Top is 0.08.
-        # Block center z when stacked should be 0.08 + 0.02 = 0.10.
-        # Calculate distance between block bottom and pillar top
-        block_bottom_z = block_pos[2] - BLOCK_HEIGHT / 2
-        pillar_top_z = pillar_pos[2] + PILLAR_HEIGHT / 2
-        target_pos = pillar_pos.copy()
-        target_pos[2] = pillar_top_z
-        
-        # Horizontal distance (x, y)
-        dist_xy = np.linalg.norm(block_pos[:2] - target_pos[:2])
-        # Vertical distance (z) - block bottom to pillar top
-        dist_z = block_bottom_z - pillar_top_z
-        # Total distance considering both horizontal and vertical
-        dist_block_target = np.sqrt(dist_xy**2 + dist_z**2)
-        r_place = (1 - np.tanh(5.0 * dist_block_target))
-
-        # Phase 3: Release (open gripper)
-        # gripper_pos: 0 = closed, 1 = open
-        r_release = gripper_pos  # Reward for opening gripper
-        
-        # Combine phases
-        if block_pos[2] < SAFE_LIFT_HEIGHT:
-            # Phase 1: Lift (block not high enough)
-            # Reward in [0, 1]
-            rew = 0.2 * r_reach + 0.8 * r_lift
-        elif dist_block_target > PLACE_THRESHOLD:
-            # Phase 2: Place (block is high but distance to target > threshold, not placed yet)
-            # Reward in [1, 2]
-            rew = 1.0 + r_place + r_release
-
-        # sparse reward
-        # success = self._check_success()
-        # if success:
-        #     rew = 1.0
-        # else:
-        #     rew = 0.0
-
-        return rew
-    
-    def _check_success(self) -> bool:
-        threshold = 0.04
-        block_pos = self._data.sensor("block_pos").data
-        pillar_pos = self._data.sensor("target_pillar_pos").data
-        PILLAR_HEIGHT = 0.08  # pillar 高度
-        BLOCK_HEIGHT = 0.04   # block 高度
-        pillar_top_z = pillar_pos[2] + PILLAR_HEIGHT / 2
-        target_block_z = pillar_top_z + BLOCK_HEIGHT / 2
-        dist_xy = np.linalg.norm(block_pos[:2] - pillar_pos[:2])
-        dist_z = np.abs(block_pos[2] - target_block_z)
-        return (dist_xy < threshold) and (dist_z < threshold) # success
+        if r_close > 0.5 and (block_pos[2] - self._z_init) >= (self._z_success - self._z_init):
+            return 1.0
+        return 0.0
 
 
 if __name__ == "__main__":
-    env = PandaStackGymEnv(render_mode="human")
+    env = PandaPickCubeGymEnvWithForce(render_mode="human")
     env.reset()
     for i in range(100):
         env.step(np.random.uniform(-1, 1, 4))
         env.render()
     env.close()
+

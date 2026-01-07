@@ -62,11 +62,11 @@ flags.DEFINE_boolean("render", False, "Whether to render the environment.")
 flags.DEFINE_boolean("save_video", True, "Whether to save the evaluation video.")
 flags.DEFINE_string("video_path", os.path.join(os.path.dirname(__file__), "eval_video.mp4"), "Path to save the video.")
 flags.DEFINE_boolean("pause_on_success", True, "Whether to pause for 0.5s on success.")
-flags.DEFINE_integer("target_success_count", 100, "Target number of successful trajectories to collect.")
+flags.DEFINE_integer("target_success_count", 20, "Target number of successful trajectories to collect.")
 flags.DEFINE_integer("target_fail_count", 0, "Target number of failed trajectories to collect.")
 
 def main(_):
-    FLAGS.reward_type = "dense" # "dense" or "01"
+    FLAGS.reward_type = "01" # "dense" or "01"
     FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints_saved_80cm_max40cm/checkpoint_396000"
     # FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints/checkpoint_118000"
     # FLAGS.checkpoint_path="random_checkpoint"
@@ -97,12 +97,12 @@ def main(_):
                 id="PandaPickCubeVision-v0",
                 entry_point="franka_sim.envs:PandaPickCubeGymEnv",
                 max_episode_steps=200,
-                kwargs={"image_obs": True},
+                kwargs={"image_obs": True, "reward_type": FLAGS.reward_type},
             )
             print("Registered PandaPickCubeVision-v0")
     
     # Force rgb_array for internal rendering logic to work correctly
-    env = gym.make(FLAGS.env, reward_type=FLAGS.reward_type, render_mode="rgb_array")
+    env = gym.make(FLAGS.env, render_mode="rgb_array") 
     
     # Wrappers
     if FLAGS.env == "PandaPickCubeVision-v0":
@@ -184,7 +184,8 @@ def main(_):
             'next_observations': [],
             'dones': [],
             'infos': [],
-            'initial_object_pos': init_obj_pos  # 单独存放初始位置信息
+            'initial_object_pos': init_obj_pos,  # 单独存放初始位置信息
+            'block_positions': []  # 每一步的物体位置信息
         }
         
         episode_success = False
@@ -208,6 +209,14 @@ def main(_):
             # Step environment
             next_obs, reward, done, truncated, info = env.step(action)
             success_step += 1
+            
+            # 获取当前物体的位置信息
+            try:
+                current_block_pos = env.unwrapped.data.sensor("block_pos").data.copy()
+            except Exception as e:
+                current_block_pos = None
+                print(f"Warning: Could not get block position at step {success_step}: {e}")
+            
             # Record transition
             traj['observations'].append(obs)
             traj['actions'].append(action)
@@ -215,6 +224,7 @@ def main(_):
             traj['next_observations'].append(next_obs)
             traj['dones'].append(done or truncated)
             traj['infos'].append(info)
+            traj['block_positions'].append(current_block_pos)  # 记录当前步的物体位置
             
             # Check success
             # If reward_type is binary, reward=1.0 means success
