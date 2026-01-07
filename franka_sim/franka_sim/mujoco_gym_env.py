@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
-import gymnasium as gym
+import gym
 import mujoco
 import numpy as np
 
@@ -51,7 +51,8 @@ class MujocoGymEnv(gym.Env):
 
     def close(self) -> None:
         if self._viewer is not None:
-            self._viewer.close()
+            # mujoco.Renderer doesn't have close() method in newer versions
+            # Just set to None to release reference
             self._viewer = None
 
     def time_limit_exceeded(self) -> bool:

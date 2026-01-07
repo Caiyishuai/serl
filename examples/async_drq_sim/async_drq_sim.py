@@ -81,9 +81,9 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("env", "PandaPickCubeVision-v0", "Name of environment.")
 # flags.DEFINE_string("env", "PandaStackVision-v0", "Name of environment.")
 flags.DEFINE_string("agent", "drq", "Name of agent.")
-flags.DEFINE_string("exp_name", None, "Name of the experiment for wandb logging.")
+flags.DEFINE_string("exp_name", "baseline_01reward_no_demo_40cm_bt", "Name of the experiment for wandb logging.")
 flags.DEFINE_integer("max_traj_length", 1000, "Maximum length of trajectory.")
-flags.DEFINE_integer("seed", 42, "Random seed.")
+flags.DEFINE_integer("seed", 0, "Random seed.")
 flags.DEFINE_bool("save_model", False, "Whether to save model.")
 flags.DEFINE_integer("batch_size", 128, "Batch size.") #256
 flags.DEFINE_integer("critic_actor_ratio", 4, "critic to actor update ratio.")
@@ -101,8 +101,8 @@ flags.DEFINE_integer("eval_n_trajs", 5, "Number of trajectories for evaluation."
 
 # flag to indicate if this is a leaner or a actor
 flags.DEFINE_boolean("learner", False, "Is this a learner or a trainer.")
-flags.DEFINE_boolean("actor", False, "Is this a learner or a trainer.")
-flags.DEFINE_boolean("render", False, "Render the environment.")
+flags.DEFINE_boolean("actor", True, "Is this a learner or a trainer.")
+flags.DEFINE_boolean("render", True, "Render the environment.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 flags.DEFINE_integer("port", 5488, "Port number for trainer server.")
 flags.DEFINE_integer("broadcast_port", 5489, "Broadcast port number for trainer server.")

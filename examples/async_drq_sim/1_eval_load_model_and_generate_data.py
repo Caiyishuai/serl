@@ -28,7 +28,8 @@ except ImportError:
 import jax
 import jax.numpy as jnp
 import numpy as np
-import gymnasium as gym
+# import gymnasium as gym
+import gym
 from absl import app, flags
 from flax.training import checkpoints
 import pickle as pkl
@@ -89,7 +90,7 @@ def main(_):
     except gym.error.NameNotFound:
         print(f"Environment {FLAGS.env} not found. Attempting explicit registration...")
         import franka_sim
-        from gymnasium.envs.registration import register
+        from gym.envs.registration import register
         
         # Explicitly register again to be sure
         if FLAGS.env == "PandaPickCubeVision-v0":

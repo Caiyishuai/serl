@@ -28,7 +28,8 @@ except ImportError:
 import jax
 import jax.numpy as jnp
 import numpy as np
-import gymnasium as gym
+# import gymnasium as gym
+import gym
 from absl import app, flags
 from flax.training import checkpoints
 import pickle as pkl
@@ -64,12 +65,12 @@ flags.DEFINE_boolean("render", False, "Whether to render the environment.")
 flags.DEFINE_boolean("save_video", True, "Whether to save the evaluation video.")
 flags.DEFINE_string("video_path", os.path.join(os.path.dirname(__file__), "eval_video.mp4"), "Path to save the video.")
 flags.DEFINE_boolean("pause_on_success", True, "Whether to pause for 0.5s on success.")
-flags.DEFINE_integer("target_success_count", 5, "Target number of successful trajectories to collect.")
+flags.DEFINE_integer("target_success_count", 20, "Target number of successful trajectories to collect.")
 flags.DEFINE_integer("target_fail_count", 0, "Target number of failed trajectories to collect.")
 
 def main(_):
     FLAGS.reward_type = "dense" # "dense" or "01"
-    FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints_saved_stack/checkpoint_672000"
+    FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints/checkpoint_744000"
     # FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints/checkpoint_118000"
     # FLAGS.checkpoint_path="random_checkpoint"
 
@@ -136,6 +137,7 @@ def main(_):
     success_count = 0
     fail_count = 0
     video_writer = None
+    can_render = False  # 初始化渲染标志
     
     # Calculate max episodes to collect both success and fail data
     max_episodes = max(FLAGS.num_episodes, int((FLAGS.target_success_count + FLAGS.target_fail_count) * 1))
