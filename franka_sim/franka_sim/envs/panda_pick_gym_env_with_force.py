@@ -76,19 +76,19 @@ class PandaPickCubeGymEnvWithForce(MujocoGymEnv):
 
         # Define observation space with force and torque sensors
         state_space = {
-            "panda/tcp_pos": spaces.Box(
-                -np.inf, np.inf, shape=(3,), dtype=np.float32
+            "tcp_pose": spaces.Box(
+                -np.inf, np.inf, shape=(6,), dtype=np.float32
             ),
-            "panda/tcp_vel": spaces.Box(
-                -np.inf, np.inf, shape=(3,), dtype=np.float32
+            "tcp_vel": spaces.Box(
+                -np.inf, np.inf, shape=(6,), dtype=np.float32
             ),
-            "panda/gripper_pos": spaces.Box(
+            "gripper_pose": spaces.Box(
                 -np.inf, np.inf, shape=(1,), dtype=np.float32
             ),
-            "panda/joint_torque": spaces.Box(
-                -np.inf, np.inf, shape=(7,), dtype=np.float32
+            "tcp_force": spaces.Box(
+                -np.inf, np.inf, shape=(3,), dtype=np.float32
             ),
-            "panda/wrist_force": spaces.Box(
+            "tcp_torque": spaces.Box(
                 -np.inf, np.inf, shape=(3,), dtype=np.float32
             ),
             "block_pos": spaces.Box(
@@ -131,14 +131,12 @@ class PandaPickCubeGymEnvWithForce(MujocoGymEnv):
             dtype=np.float32,
         )
 
-        # Initialize gymnasium MujocoRenderer with proper dimensions
+        # Initialize gymnasium MujocoRenderer
         from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 
         self._viewer = MujocoRenderer(
             self.model,
             self.data,
-            width=render_spec.width,
-            height=render_spec.height,
         )
         if self.render_mode == "human":
             self._viewer.render(self.render_mode)
@@ -224,9 +222,13 @@ class PandaPickCubeGymEnvWithForce(MujocoGymEnv):
     def render(self):
         rendered_frames = []
         for cam_id in self.camera_id:
-            rendered_frames.append(
-                self._viewer.render(render_mode="rgb_array", camera_id=cam_id)
+            frame = self._viewer.render(
+                render_mode="rgb_array",
+                camera_id=cam_id,
+                width=self._render_specs.width,
+                height=self._render_specs.height
             )
+            rendered_frames.append(frame)
         return rendered_frames
 
     # Helper methods.
@@ -235,28 +237,29 @@ class PandaPickCubeGymEnvWithForce(MujocoGymEnv):
         obs = {}
         obs["state"] = {}
 
-        # TCP position and velocity
-        tcp_pos = self._data.sensor("2f85/pinch_pos").data
-        obs["state"]["panda/tcp_pos"] = tcp_pos.astype(np.float32)
+        # TCP pose: 6D (position 3D + orientation 3D, latter padded with zeros)
+        tcp_pos_3d = self._data.sensor("2f85/pinch_pos").data
+        tcp_pose = np.concatenate([tcp_pos_3d, np.zeros(3)]).astype(np.float32)
+        obs["state"]["tcp_pose"] = tcp_pose
 
-        tcp_vel = self._data.sensor("2f85/pinch_vel").data
-        obs["state"]["panda/tcp_vel"] = tcp_vel.astype(np.float32)
+        # TCP velocity: 6D (linear velocity 3D + angular velocity 3D, latter padded with zeros)
+        tcp_vel_3d = self._data.sensor("2f85/pinch_vel").data
+        tcp_vel = np.concatenate([tcp_vel_3d, np.zeros(3)]).astype(np.float32)
+        obs["state"]["tcp_vel"] = tcp_vel
 
-        # Gripper position
-        gripper_pos = np.array(
+        # Gripper pose
+        gripper_pose = np.array(
             self._data.ctrl[self._gripper_ctrl_id] / 255, dtype=np.float32
         )
-        obs["state"]["panda/gripper_pos"] = gripper_pos
+        obs["state"]["gripper_pose"] = gripper_pose
 
-        # Joint torques (7 joints)
-        joint_torque = np.stack(
-            [self._data.sensor(f"panda/joint{i}_torque").data for i in range(1, 8)],
-        ).ravel()
-        obs["state"]["panda/joint_torque"] = joint_torque.astype(np.float32)
+        # TCP force: 3D force from wrist sensor
+        tcp_force = self._data.sensor("panda/wrist_force").data.astype(np.float32)
+        obs["state"]["tcp_force"] = tcp_force
 
-        # Wrist force sensor (3D force)
-        wrist_force = self._data.sensor("panda/wrist_force").data.astype(np.float32)
-        obs["state"]["panda/wrist_force"] = wrist_force
+        # TCP torque: 3D torque from wrist sensor
+        tcp_torque = self._data.sensor("panda/wrist_torque").data.astype(np.float32)
+        obs["state"]["tcp_torque"] = tcp_torque
 
         # Block position (always included, even with image_obs)
         block_pos = self._data.sensor("block_pos").data.astype(np.float32)
@@ -281,9 +284,10 @@ class PandaPickCubeGymEnvWithForce(MujocoGymEnv):
         r_lift = np.clip(r_lift, 0.0, 1.0)
         rew = 0.3 * r_close + 0.7 * r_lift
 
-        if r_close > 0.5 and (block_pos[2] - self._z_init) >= (self._z_success - self._z_init):
-            return 1.0
-        return 0.0
+        # if r_close > 0.5 and (block_pos[2] - self._z_init) >= (self._z_success - self._z_init):
+        #     return 1.0
+        # return 0.0
+        return rew
 
 
 if __name__ == "__main__":

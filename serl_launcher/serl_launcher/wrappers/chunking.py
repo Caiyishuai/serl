@@ -1,8 +1,8 @@
 from collections import deque
 from typing import Optional
 
-import gym
-import gym.spaces
+import gymnasium as gym
+import gymnasium.spaces
 import jax
 import numpy as np
 

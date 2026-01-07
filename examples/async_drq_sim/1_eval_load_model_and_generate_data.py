@@ -28,8 +28,7 @@ except ImportError:
 import jax
 import jax.numpy as jnp
 import numpy as np
-# import gymnasium as gym
-import gym
+import gymnasium as gym
 from absl import app, flags
 from flax.training import checkpoints
 import pickle as pkl
@@ -55,8 +54,8 @@ flags.DEFINE_string("reward_type", "dense", "Reward type: 'dense' or 'binary'.")
 flags.DEFINE_boolean("save_trajs", True, "Whether to save trajectories.")
 flags.DEFINE_boolean("save_success_only", False, "Whether to save only successful trajectories.")
 flags.DEFINE_integer("num_episodes", 150, "Number of episodes to evaluate.")
-flags.DEFINE_string("output_path", os.path.join(os.path.dirname(__file__), "success_trajs_{}_40cm_01_reward.pkl"), "Path to save the collected data. Use {} as placeholder for num_episodes.")
-flags.DEFINE_string("fail_output_path", os.path.join(os.path.dirname(__file__), "fail_trajs_{}_40cm_01_reward.pkl"), "Path to save the failed trajectories. Use {} as placeholder for num_episodes.")
+flags.DEFINE_string("output_path", os.path.join(os.path.dirname(__file__), "success_trajs_{}_force_reward.pkl"), "Path to save the collected data. Use {} as placeholder for num_episodes.")
+flags.DEFINE_string("fail_output_path", os.path.join(os.path.dirname(__file__), "fail_trajs_{}_force_reward.pkl"), "Path to save the failed trajectories. Use {} as placeholder for num_episodes.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_string("encoder_type", "resnet-pretrained", "Encoder type.")
 flags.DEFINE_boolean("render", False, "Whether to render the environment.")
@@ -67,13 +66,13 @@ flags.DEFINE_integer("target_success_count", 20, "Target number of successful tr
 flags.DEFINE_integer("target_fail_count", 0, "Target number of failed trajectories to collect.")
 
 def main(_):
-    FLAGS.reward_type = "01" # "dense" or "01"
+    FLAGS.reward_type = "dense" # "dense" or "01"
     FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints_saved_80cm_max40cm/checkpoint_396000"
     # FLAGS.checkpoint_path = "examples/async_drq_sim/checkpoints/checkpoint_118000"
     # FLAGS.checkpoint_path="random_checkpoint"
 
-    FLAGS.output_path = os.path.join(os.path.dirname(__file__), f"success_trajs_{FLAGS.target_success_count}_{FLAGS.reward_type}.pkl")
-    FLAGS.fail_output_path = os.path.join(os.path.dirname(__file__), f"fail_trajs_{FLAGS.target_fail_count}_{FLAGS.reward_type}.pkl")
+    FLAGS.output_path = os.path.join(os.path.dirname(__file__), f"success_trajs_{FLAGS.target_success_count}_force_{FLAGS.reward_type}.pkl")
+    FLAGS.fail_output_path = os.path.join(os.path.dirname(__file__), f"fail_trajs_{FLAGS.target_fail_count}_force_{FLAGS.reward_type}.pkl")
 
 
     # Use GPU if available
@@ -90,7 +89,7 @@ def main(_):
     except gym.error.NameNotFound:
         print(f"Environment {FLAGS.env} not found. Attempting explicit registration...")
         import franka_sim
-        from gym.envs.registration import register
+        from gymnasium.envs.registration import register
         
         # Explicitly register again to be sure
         if FLAGS.env == "PandaPickCubeVision-v0":

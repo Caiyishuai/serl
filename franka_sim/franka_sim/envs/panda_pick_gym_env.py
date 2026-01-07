@@ -139,14 +139,12 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
             dtype=np.float32,
         )
 
-        # Initialize gymnasium MujocoRenderer with proper dimensions
+        # Initialize gymnasium MujocoRenderer
         from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 
         self._viewer = MujocoRenderer(
             self.model,
             self.data,
-            width=render_spec.width,
-            height=render_spec.height,
         )
         if self.render_mode == "human":
             self._viewer.render(self.render_mode)
@@ -239,9 +237,13 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
     def render(self):
         rendered_frames = []
         for cam_id in self.camera_id:
-            rendered_frames.append(
-                self._viewer.render(render_mode="rgb_array", camera_id=cam_id)
+            frame = self._viewer.render(
+                render_mode="rgb_array",
+                camera_id=cam_id,
+                width=self._render_specs.width,
+                height=self._render_specs.height
             )
+            rendered_frames.append(frame)
         return rendered_frames
 
     # Helper methods.

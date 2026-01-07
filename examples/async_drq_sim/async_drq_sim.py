@@ -78,7 +78,9 @@ def print_green(x):
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("env", "PandaPickCubeVision-v0", "Name of environment.")
+# flags.DEFINE_string("env", "PandaPickCubeVision-v0", "Name of environment.")
+flags.DEFINE_string("env", "PandaPickCubeGymEnvWithForce-v0", "Name of environment.")
+
 # flags.DEFINE_string("env", "PandaStackVision-v0", "Name of environment.")
 flags.DEFINE_string("agent", "drq", "Name of agent.")
 flags.DEFINE_string("exp_name", "baseline_01reward_no_demo_40cm_bt", "Name of the experiment for wandb logging.")
