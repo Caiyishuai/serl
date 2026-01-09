@@ -9,7 +9,7 @@ __all__ = [
     "PandaStackGymEnv",
 ]
 
-from gym.envs.registration import register
+from gymnasium.envs.registration import register
 
 register(
     id="PandaPickCube-v0",

@@ -41,11 +41,11 @@ import os
 
 from typing import Any, Dict, Optional
 import pickle as pkl
-# import gymnasium as gym
-# from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
+import gymnasium as gym
+from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 
-import gym
-from gym.wrappers.record_episode_statistics import RecordEpisodeStatistics
+# import gym
+# from gym.wrappers.record_episode_statistics import RecordEpisodeStatistics
 
 
 from serl_launcher.agents.continuous.drq import DrQAgent
@@ -78,8 +78,8 @@ def print_green(x):
 
 FLAGS = flags.FLAGS
 
-# flags.DEFINE_string("env", "PandaPickCubeVision-v0", "Name of environment.")
-flags.DEFINE_string("env", "PandaPickCubeGymEnvWithForce-v0", "Name of environment.")
+flags.DEFINE_string("env", "PandaPickCubeVision-v0", "Name of environment.")
+# flags.DEFINE_string("env", "PandaPickCubeGymEnvWithForce-v0", "Name of environment.")
 
 # flags.DEFINE_string("env", "PandaStackVision-v0", "Name of environment.")
 flags.DEFINE_string("agent", "drq", "Name of agent.")
@@ -104,7 +104,7 @@ flags.DEFINE_integer("eval_n_trajs", 5, "Number of trajectories for evaluation."
 # flag to indicate if this is a leaner or a actor
 flags.DEFINE_boolean("learner", False, "Is this a learner or a trainer.")
 flags.DEFINE_boolean("actor", True, "Is this a learner or a trainer.")
-flags.DEFINE_boolean("render", True, "Render the environment.")
+flags.DEFINE_boolean("render", False, "Render the environment.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 flags.DEFINE_integer("port", 5488, "Port number for trainer server.")
 flags.DEFINE_integer("broadcast_port", 5489, "Broadcast port number for trainer server.")
@@ -494,9 +494,37 @@ def main(_):
 
                 with open(FLAGS.demo_path, "rb") as f:
                     trajs = pkl.load(f)
-                    # 直接插入transition，不需要展开
+                    # 展开轨迹，逐个transition插入
                     for traj in trajs:
-                        demo_buffer.insert(traj)
+                        # 检查数据格式：旧格式(list of dict)还是新格式(dict of arrays)
+                        if isinstance(traj['observations'], list):
+                            # 旧格式：observations是list of dict
+                            num_steps = len(traj['observations'])
+                            for i in range(num_steps):
+                                done = traj['dones'][i]
+                                transition = {
+                                    'observations': traj['observations'][i],
+                                    'next_observations': traj['next_observations'][i],
+                                    'actions': traj['actions'][i],
+                                    'rewards': traj['rewards'][i],
+                                    'dones': done,
+                                    'masks': 1.0 - float(done),  # mask=0 when done=True, mask=1 otherwise
+                                }
+                                demo_buffer.insert(transition)
+                        else:
+                            # 新格式：observations是dict，每个字段的shape为(N, ...)
+                            num_steps = len(traj['actions'])
+                            for i in range(num_steps):
+                                done = traj['dones'][i]
+                                transition = {
+                                    'observations': {k: v[i] for k, v in traj['observations'].items()},
+                                    'next_observations': {k: v[i] for k, v in traj['next_observations'].items()},
+                                    'actions': traj['actions'][i],
+                                    'rewards': traj['rewards'][i],
+                                    'dones': done,
+                                    'masks': 1.0 - float(done),  # mask=0 when done=True, mask=1 otherwise
+                                }
+                                demo_buffer.insert(transition)
 
             print(f"demo buffer size: {len(demo_buffer)}")
         else:
