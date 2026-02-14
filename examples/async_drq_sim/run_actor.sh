@@ -2,8 +2,11 @@
 # # export CUDA_VISIBLE_DEVICES=4 && \
 export XLA_PYTHON_CLIENT_PREALLOCATE=false && \
 export XLA_PYTHON_CLIENT_MEM_FRACTION=.2 && \
-export MUJOCO_GL=glfw && \
-export DISPLAY=:0 && \
+export JAX_PLATFORM_NAME=cuda && \
+# Avoid JAX CUDA detection bug (cuda_nvcc.__file__ is None); use system CUDA
+export CUDA_ROOT="${CUDA_ROOT:-/usr/local/cuda-12.6}"
+# export MUJOCO_GL=glfw && \
+# export DISPLAY=:0 && \
 # export HF_ENDPOINT=https://hf-mirror.com && \
 # export JAX_PLATFORM_NAME=gpu && \
 # export CUDA_HOME=/usr/local/cuda && \
@@ -11,15 +14,25 @@ export DISPLAY=:0 && \
 # export JAX_TRACEBACK_FILTERING=off && \
 
 # xxx
-python async_drq_sim.py "$@" \
-    --actor \
-    --exp_name=pick_cube_sparse_reward_demo_bt=128_no_render \
-    --seed 0 \
-    --random_steps 1000 \
-    --encoder_type resnet-pretrained \
+# python async_drq_sim.py "$@" \
+#     --actor \
+#     --exp_name=pick_cube_sparse_reward_demo_bt=128_no_render \
+#     --seed 0 \
+#     --random_steps 1000 \
+#     --encoder_type resnet-pretrained \
+
+
     # --render
     # --debug
 
+
+python async_drq_sim_ori.py "$@" \
+    --actor \
+    --exp_name=stack_cube \
+    --seed 0 \
+    --random_steps 1000 \
+    --encoder_type resnet-pretrained \
+    --render
 
 
 # export HF_ENDPOINT=https://hf-mirror.com

@@ -46,8 +46,21 @@ def add_to(dict_of_lists, single_dict):
         dict_of_lists[k].append(v)
 
 
+def _get_success_from_info(info: dict) -> float:
+    """Extract success (0 or 1) from env info, supporting nested keys like eval_success."""
+    flat = flatten(info)
+    for key in ("success", "eval_success", "final.success", "final.eval_success"):
+        if key in flat:
+            v = flat[key]
+            if hasattr(v, "item"):
+                return float(v.item()) if getattr(v, "ndim", 1) == 0 else float(v)
+            return float(bool(v))
+    return 0.0
+
+
 def evaluate(policy_fn, env: gym.Env, num_episodes: int) -> Dict[str, float]:
     stats = defaultdict(list)
+    episode_successes = []
     for _ in range(num_episodes):
         observation, info = env.reset()
         add_to(stats, flatten(info))
@@ -58,9 +71,13 @@ def evaluate(policy_fn, env: gym.Env, num_episodes: int) -> Dict[str, float]:
             done = terminated or truncated
             add_to(stats, flatten(info))
         add_to(stats, flatten(info, parent_key="final"))
+        # Episode-level success: use last step's success (did this trajectory succeed?)
+        episode_successes.append(_get_success_from_info(info))
 
     for k, v in stats.items():
         stats[k] = np.mean(v)
+    # Average success over episodes (e.g. 5 trajs -> 0, 0.2, 0.4, ..., 1.0)
+    stats["episode_success_rate"] = np.mean(episode_successes)
     return stats
 
 

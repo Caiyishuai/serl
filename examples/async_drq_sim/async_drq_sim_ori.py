@@ -1,5 +1,33 @@
 #!/usr/bin/env python3
 
+import os
+import sys
+import types
+
+# Fix for JAX CUDA detection issue - must be set before any JAX imports
+# This prevents the cuda_nvcc.__file__ NoneType error
+# os.environ.setdefault("JAX_PLATFORM_NAME", "gpu")
+
+# # Workaround for cuda_nvcc.__file__ being None (namespace package issue)
+# # JAX imports cuda_nvcc from nvidia package, so we need to patch nvidia.cuda_nvcc
+# try:
+#     from nvidia import cuda_nvcc
+#     # If module exists but __file__ is None, set it to a dummy value
+#     if not hasattr(cuda_nvcc, '__file__') or cuda_nvcc.__file__ is None:
+#         cuda_nvcc.__file__ = '/tmp/cuda_nvcc_workaround.py'
+# except ImportError:
+#     # Create nvidia package and cuda_nvcc module if they don't exist
+#     if 'nvidia' not in sys.modules:
+#         nvidia = types.ModuleType('nvidia')
+#         sys.modules['nvidia'] = nvidia
+#     else:
+#         nvidia = sys.modules['nvidia']
+    
+#     cuda_nvcc = types.ModuleType('cuda_nvcc')
+#     cuda_nvcc.__file__ = '/tmp/cuda_nvcc_workaround.py'
+#     nvidia.cuda_nvcc = cuda_nvcc
+#     sys.modules['nvidia.cuda_nvcc'] = cuda_nvcc
+
 import time
 from functools import partial
 import jax
@@ -39,12 +67,14 @@ import franka_sim
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("env", "PandaPickCubeVision-v0", "Name of environment.")
+# flags.DEFINE_string("env", "PandaPickCubeRealSpaceVision-v0", "Name of environment.")
+
 flags.DEFINE_string("agent", "drq", "Name of agent.")
 flags.DEFINE_string("exp_name", None, "Name of the experiment for wandb logging.")
 flags.DEFINE_integer("max_traj_length", 1000, "Maximum length of trajectory.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_bool("save_model", False, "Whether to save model.")
-flags.DEFINE_integer("batch_size", 64, "Batch size.") #256
+flags.DEFINE_integer("batch_size", 16, "Batch size.") #256
 flags.DEFINE_integer("critic_actor_ratio", 4, "critic to actor update ratio.")
 
 flags.DEFINE_integer("max_steps", 1000000, "Maximum number of training steps.")

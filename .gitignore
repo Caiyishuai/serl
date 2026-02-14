@@ -179,5 +179,6 @@ checkpoints/
 checkpoints_saved/
 checkpoints_saved_*/
 data/
+!serl_launcher/serl_launcher/data/
 wandb/
 tools/data/

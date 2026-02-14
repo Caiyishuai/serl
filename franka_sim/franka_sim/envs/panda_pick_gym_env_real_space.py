@@ -19,16 +19,24 @@ from franka_sim.mujoco_gym_env import GymRenderingSpec, MujocoGymEnv
 _HERE = Path(__file__).parent
 _XML_PATH = _HERE / "xmls" / "arena.xml"
 _PANDA_HOME = np.asarray((0, -0.785, 0, -2.35, 0, 1.57, np.pi / 4))
-_CARTESIAN_BOUNDS = np.asarray([[0.2, -0.3, 0], [0.6, 0.3, 0.5]])
-_SAMPLING_BOUNDS = np.asarray([[0.25, -0.25], [0.55, 0.25]])
+# Arm workspace: 8cm x 8cm x 10cm. Z from 5cm to 15cm (initial 10cm above ground).
+_CARTESIAN_BOUNDS = np.asarray([[0.36, -0.04, 0.05], [0.44, 0.04, 0.15]])
+# Object sampling: 1cm x 6cm (meters), centered at (0.4, 0).
+_SAMPLING_BOUNDS = np.asarray([[0.395, -0.03], [0.405, 0.03]])
+# Initial TCP height above ground (10 cm).
+_INITIAL_TCP_Z = 0.10
+# Max position change per step (1.5 cm).
+_STEP_POS_SCALE = 0.015
+# Lift height for success (8 cm).
+_SUCCESS_LIFT_HEIGHT = 0.08
 
 
-class PandaPickCubeGymEnv(MujocoGymEnv):
+class PandaPickCubeRealSpaceVisionGymEnv(MujocoGymEnv):
     metadata = {"render_modes": ["rgb_array", "human"]}
 
     def __init__(
         self,
-        action_scale: np.ndarray = np.asarray([0.1, 1]),
+        action_scale: np.ndarray = np.asarray([_STEP_POS_SCALE, 1]),
         seed: int = 0,
         control_dt: float = 0.02,
         physics_dt: float = 0.002,
@@ -152,25 +160,24 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
     def reset(
         self, seed=None, **kwargs
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
-        """Reset the environment."""
+        """Reset the environment with randomness: block in sampling bounds, gripper in workspace."""
         mujoco.mj_resetData(self._model, self._data)
 
-        # Reset arm to home position.
-        self._data.qpos[self._panda_dof_ids] = _PANDA_HOME
-        mujoco.mj_forward(self._model, self._data)
-
-        # Reset mocap body to home position.
-        tcp_pos = self._data.sensor("2f85/pinch_pos").data
-        self._data.mocap_pos[0] = tcp_pos
-
-        # Sample a new block position.
-        block_xy = np.random.uniform(*_SAMPLING_BOUNDS)
+        # Sample block position (1cm x 6cm region).
+        block_xy = np.random.uniform(_SAMPLING_BOUNDS[0], _SAMPLING_BOUNDS[1])
         self._data.jnt("block").qpos[:3] = (*block_xy, self._block_z)
         mujoco.mj_forward(self._model, self._data)
 
-        # Cache the initial block height.
+        # Reset arm to home, then set TCP to a random position within action-space bounds.
+        self._data.qpos[self._panda_dof_ids] = _PANDA_HOME
+        mujoco.mj_forward(self._model, self._data)
+        initial_tcp = np.random.uniform(_CARTESIAN_BOUNDS[0], _CARTESIAN_BOUNDS[1])
+        self._data.mocap_pos[0] = initial_tcp
+        mujoco.mj_forward(self._model, self._data)
+
+        # Cache initial block height and success height (lift 8 cm).
         self._z_init = self._data.sensor("block_pos").data[2]
-        self._z_success = self._z_init +  0.4 # # 0.2,0.4
+        self._z_success = self._z_init + _SUCCESS_LIFT_HEIGHT
 
         obs = self._compute_observation()
         return obs, {}
@@ -316,7 +323,7 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
 
 
 if __name__ == "__main__":
-    env = PandaPickCubeGymEnv(render_mode="human")
+    env = PandaPickCubeRealSpaceVisionGymEnv(render_mode="human")
     env.reset()
     for i in range(100):
         env.step(np.random.uniform(-1, 1, 4))

@@ -4,6 +4,8 @@ import os
 import sys
 import types
 
+from jax._src.api import F
+
 # Fix for JAX CUDA detection issue - must be set before any JAX imports
 # This prevents the cuda_nvcc.__file__ NoneType error
 os.environ.setdefault("JAX_PLATFORM_NAME", "gpu")
@@ -44,8 +46,10 @@ import gymnasium as gym
 import mani_skill.envs
 from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 
+from collections import defaultdict
+
 from serl_launcher.agents.continuous.drq import DrQAgent
-from serl_launcher.common.evaluation import evaluate
+from serl_launcher.common.evaluation import evaluate, flatten, add_to
 from serl_launcher.utils.timer_utils import Timer
 from serl_launcher.wrappers.chunking import ChunkingWrapper
 from serl_launcher.utils.train_utils import concat_batches
@@ -64,7 +68,7 @@ from serl_launcher.wrappers.serl_obs_wrappers import SERLObsWrapper
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("env", "PickCube-v1", "Name of environment.")
+flags.DEFINE_string("env", "PlaceSphere-v1", "Name of environment.")
 flags.DEFINE_string("obs_mode", "rgb+state", "Observation mode for ManiSkill environment.")
 flags.DEFINE_string("control_mode", "pd_ee_delta_pose", "Control mode for ManiSkill environment.")
 flags.DEFINE_string("robot_uids", "panda_wristcam", "Robot UIDs for ManiSkill environment.")
@@ -94,6 +98,7 @@ flags.DEFINE_boolean("render", False, "Render the environment.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 # "small" is a 4 layer convnet, "resnet" and "mobilenet" are frozen with pretrained weights
 flags.DEFINE_string("encoder_type", "resnet-pretrained", "Encoder type.")
+# flags.DEFINE_string("demo_path", "/home/caiyishuai/workspace/maniskill-ws/serl_data/mani_skill_place_sphere_100.pkl", "Path to the demo data.")
 flags.DEFINE_string("demo_path", None, "Path to the demo data.")
 flags.DEFINE_integer("checkpoint_period", 0, "Period to save checkpoints.")
 flags.DEFINE_string("checkpoint_path", None, "Path to save checkpoints.")
@@ -112,6 +117,39 @@ sharding = jax.sharding.PositionalSharding(devices)
 
 def print_green(x):
     return print("\033[92m {}\033[00m".format(x))
+
+
+def _get_success_from_info(info: dict) -> float:
+    """从 env info 中取出 success (0/1)，支持 ManiSkill 等嵌套键。"""
+    flat = flatten(info)
+    for key in ("success", "eval_success", "final.success", "final.eval_success"):
+        if key in flat:
+            v = flat[key]
+            if hasattr(v, "item"):
+                return float(v.item()) if getattr(v, "ndim", 1) == 0 else float(v)
+            return float(bool(v))
+    return 0.0
+
+
+def evaluate_with_episode_success(policy_fn, env, num_episodes: int) -> Dict[str, float]:
+    """与 evaluate() 相同，但额外返回按「轨迹数」平均的 episode_success_rate（0/0.2/.../1.0）。"""
+    stats = defaultdict(list)
+    episode_successes = []
+    for _ in range(num_episodes):
+        observation, info = env.reset()
+        add_to(stats, flatten(info))
+        done = False
+        while not done:
+            action = policy_fn(observation)
+            observation, _, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            add_to(stats, flatten(info))
+        add_to(stats, flatten(info, parent_key="final"))
+        episode_successes.append(_get_success_from_info(info))
+    for k, v in stats.items():
+        stats[k] = np.mean(v)
+    stats["episode_success_rate"] = float(np.mean(episode_successes))
+    return stats
 
 
 ##############################################################################
@@ -282,7 +320,7 @@ def actor(agent: DrQAgent, data_store, env, sampling_rng):
 
         if step % FLAGS.eval_period == 0:
             with timer.context("eval"):
-                evaluate_info = evaluate(
+                evaluate_info = evaluate_with_episode_success(
                     policy_fn=partial(agent.sample_actions, argmax=True),
                     env=eval_env,
                     num_episodes=FLAGS.eval_n_trajs,
@@ -311,7 +349,7 @@ def learner(
     """
     # set up wandb and logging
     wandb_logger = make_wandb_logger(
-        project="serl_dev",
+        project="maniskill_serl",
         description=FLAGS.exp_name or FLAGS.env,
         debug=FLAGS.debug,
     )
@@ -456,7 +494,7 @@ def main(_):
             control_mode=FLAGS.control_mode,
             robot_uids=FLAGS.robot_uids,
         )
-
+    # envs = gym.make(args.env_id, num_envs=args.num_envs if not args.evaluate else 1, reconfiguration_freq=args.reconfiguration_freq, **env_kwargs)
 
     # ManiSkill multi-camera wrapper
     import torch
@@ -593,11 +631,12 @@ def main(_):
                     raise FileNotFoundError(f"File {FLAGS.demo_path} not found")
 
                 with open(FLAGS.demo_path, "rb") as f:
-                    trajs = pkl.load(f)
-                    for traj in trajs:
-                        demo_buffer.insert(traj)
+                    transitions = pkl.load(f)
+                # pkl 格式：list，每个元素是一条 transition（dict: observations, next_observations, actions, rewards, masks, dones）
+                for transition in transitions:
+                    demo_buffer.insert(transition)
 
-            print(f"demo buffer size: {len(demo_buffer)}")
+            print_green(f"demo buffer size: {len(demo_buffer)}")
         else:
             demo_buffer = None
 
