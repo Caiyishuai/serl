@@ -182,3 +182,8 @@ data/
 !serl_launcher/serl_launcher/data/
 wandb/
 tools/data/
+
+# Local/vendor experiments — not synced to GitHub
+examples/openpi/
+examples/others/
+examples/*.zip
