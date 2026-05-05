@@ -168,7 +168,24 @@ cython_debug/
 *.pyc
 __pycache__/
 *.pyo
+
+# Model weights / checkpoints (do not upload)
 *.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.h5
+*.hdf5
+*.pb
+*.tflite
+*.engine
+*.nnet
+*.ot
+pretrained/
+pretrained_models/
+model_weights/
+weights/
 
 # MUJOCO_LOG.TXT
 MUJOCO_LOG.TXT
