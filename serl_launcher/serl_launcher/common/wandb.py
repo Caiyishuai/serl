@@ -67,6 +67,7 @@ class WandBLogger(object):
         else:
             mode = "online"
 
+
         self.run = wandb.init(
             config=self._variant,
             project=self.config.project,

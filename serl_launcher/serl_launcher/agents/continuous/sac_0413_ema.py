@@ -30,6 +30,8 @@ class SACAgent(flax.struct.PyTreeNode):
     state: JaxRLTrainState
     config: dict = nonpytree_field()
     tau: float = 0.005  # Current target network update rate (soft_target_update_rate)
+    critic_loss_ema: float = 0.0  # Exponential moving average of critic loss (for adaptive tau)
+    update_counter: int = 0  # Counts critic update() calls (for throttled_ratio mode)
 
     def forward_critic(
         self,
@@ -283,51 +285,82 @@ class SACAgent(flax.struct.PyTreeNode):
 
         # Adaptive tau and target network update
         new_tau = self.tau
-        # print('tau:', self.tau)
-        # print('adaptive_tau_enabled:', self.config.get("adaptive_tau_enabled", False))
-        # exit()
+        new_ema = self.critic_loss_ema
+        new_update_counter = self.update_counter
         if "critic" in networks_to_update:
-            # Check if adaptive tau is enabled
             adaptive_tau_enabled = self.config.get("adaptive_tau_enabled", False)
-            # adaptive_tau_enabled = True
-            # adaptive_tau_enabled = False
-            
+
             if adaptive_tau_enabled:
-                critic_loss_threshold = self.config.get("critic_loss_threshold", 0.3)
-                tau_min = self.config.get("tau_min", 0.005)
-                tau_max = self.config.get("tau_max", 0.2)
+                ema_decay = self.config.get("critic_loss_ema_decay", 0.9)
+                tau_min = self.config.get("tau_min", 0.001)
+                tau_max = self.config.get("tau_max", 0.05)
                 tau_adjust_factor = self.config.get("tau_adjust_factor", 1.2)
-                tau_adjust_tolerance = self.config.get("tau_adjust_tolerance", 0.4)
-                
+                tau_adjust_tolerance = self.config.get("tau_adjust_tolerance", 0.15)
+                # Python-time (static) switch: "ratio_ema" (iter_001) or
+                # "throttled_ratio" (iter_003 offline winner).
+                tau_update_mode = self.config.get("tau_update_mode", "ratio_ema")
+                tau_throttle_interval = self.config.get("tau_throttle_interval", 80)
+
                 critic_loss = info["critic"]["critic_loss"]
-                
-                # Define dead zone boundaries
-                lower_bound = critic_loss_threshold * (1.0 - tau_adjust_tolerance)
-                upper_bound = critic_loss_threshold * (1.0 + tau_adjust_tolerance)
-                
-                # Adaptive tau with dead zone:
-                # - critic_loss < lower_bound: target is well learned, increase tau
-                # - critic_loss > upper_bound: still learning, decrease tau
-                # - in between: keep tau unchanged (dead zone)
-                new_tau = jax.lax.cond(
-                    critic_loss < lower_bound,
-                    lambda t: jnp.clip(t * tau_adjust_factor, tau_min, tau_max),
-                    lambda t: jax.lax.cond(
-                        critic_loss > upper_bound,
-                        lambda t2: jnp.clip(t2 / tau_adjust_factor, tau_min, tau_max),
-                        lambda t2: t2,  # Dead zone: no change
-                        t
-                    ),
-                    self.tau
+
+                # Update EMA: initialize to first loss value, then track exponentially.
+                # (Same for both modes; cheap and needed as the ratio baseline.)
+                new_ema = jnp.where(
+                    self.critic_loss_ema < 1e-10,
+                    critic_loss,
+                    ema_decay * self.critic_loss_ema + (1.0 - ema_decay) * critic_loss,
                 )
-                
-                # Log adaptive tau info
-                
-                info["adaptive_tau_lower_bound"] = lower_bound
-                info["adaptive_tau_upper_bound"] = upper_bound
+
+                # Scale-invariant ratio: current loss vs EMA baseline
+                ratio = critic_loss / (new_ema + 1e-10)
+
+                lower = 1.0 - tau_adjust_tolerance  # ratio < lower → loss dropping → increase tau
+                upper = 1.0 + tau_adjust_tolerance  # ratio > upper → loss spiking → decrease tau
+
+                def _adjust_tau(_):
+                    """Compute the adjusted tau given current ratio."""
+                    return jax.lax.cond(
+                        ratio < lower,
+                        lambda t: jnp.clip(t * tau_adjust_factor, tau_min, tau_max),
+                        lambda t: jax.lax.cond(
+                            ratio > upper,
+                            lambda t2: jnp.clip(t2 / tau_adjust_factor, tau_min, tau_max),
+                            lambda t2: t2,  # Dead zone: no change
+                            t,
+                        ),
+                        self.tau,
+                    )
+
+                # Always increment the counter so throttle timing is tracked.
+                new_update_counter = self.update_counter + 1
+
+                if tau_update_mode == "throttled_ratio":
+                    # iter_003 offline-validated rule: only decide every `throttle`
+                    # sub-step calls, with a much gentler adjust factor (set via
+                    # config, typically 1.05). This suppresses the bang-bang behavior
+                    # seen in iter_001 RatioEMA on real critic_loss signals.
+                    should_adjust = (new_update_counter % tau_throttle_interval) == 0
+                    new_tau = jax.lax.cond(
+                        should_adjust,
+                        _adjust_tau,
+                        lambda _: self.tau,  # skip: hold previous tau
+                        operand=None,
+                    )
+                    info["adaptive_tau/should_adjust"] = should_adjust.astype(jnp.float32)
+                else:
+                    # "ratio_ema" (default): iter_001 behavior — decide every sub-step.
+                    new_tau = _adjust_tau(None)
+
+                info["adaptive_tau/ema"] = new_ema
+                info["adaptive_tau/ratio"] = ratio
+                info["adaptive_tau/update_counter"] = new_update_counter.astype(
+                    jnp.float32
+                )
+
             info["curr_tau"] = new_tau
-            # Update target network with current tau
             new_state = new_state.target_update(new_tau)
+
+        info["tau"] = new_tau
 
         # Update RNG
         rng, _ = jax.random.split(self.state.rng)
@@ -341,7 +374,12 @@ class SACAgent(flax.struct.PyTreeNode):
             ):
                 info[f"{name}_lr"] = opt_state.hyperparams["learning_rate"]
 
-        return self.replace(state=new_state, tau=new_tau), info
+        return self.replace(
+            state=new_state,
+            tau=new_tau,
+            critic_loss_ema=new_ema,
+            update_counter=new_update_counter,
+        ), info
 
     @partial(jax.jit, static_argnames=("argmax",))
     def sample_actions(
@@ -396,11 +434,16 @@ class SACAgent(flax.struct.PyTreeNode):
         critic_subsample_size: Optional[int] = None,
         # Adaptive tau config
         adaptive_tau_enabled: bool = False,
-        critic_loss_threshold: float = 0.3,
-        tau_min: float = 0.005,
-        tau_max: float = 0.2,
+        tau_min: float = 0.001,
+        tau_max: float = 0.05,
         tau_adjust_factor: float = 1.2,
-        tau_adjust_tolerance: float = 0.4,
+        tau_adjust_tolerance: float = 0.15,
+        critic_loss_ema_decay: float = 0.9,
+        tau_update_mode: str = "ratio_ema",  # "ratio_ema" (iter_001) | "throttled_ratio" (iter_003+)
+        tau_throttle_interval: int = 80,  # only used when tau_update_mode="throttled_ratio";
+                                          # counts inner update() calls (UTD-multiplied).
+                                          # e.g. UTD=4, interval=80 → 1 decision / 20 outer
+                                          # update_high_utd() calls.
     ):
         networks = {
             "actor": actor_def,
@@ -449,13 +492,17 @@ class SACAgent(flax.struct.PyTreeNode):
                 target_entropy=target_entropy,
                 backup_entropy=backup_entropy,
                 adaptive_tau_enabled=adaptive_tau_enabled,
-                critic_loss_threshold=critic_loss_threshold,
                 tau_min=tau_min,
                 tau_max=tau_max,
                 tau_adjust_factor=tau_adjust_factor,
                 tau_adjust_tolerance=tau_adjust_tolerance,
+                critic_loss_ema_decay=critic_loss_ema_decay,
+                tau_update_mode=tau_update_mode,
+                tau_throttle_interval=tau_throttle_interval,
             ),
             tau=soft_target_update_rate,  # Initialize tau with soft_target_update_rate
+            critic_loss_ema=0.0,
+            update_counter=0,
         )
 
     @classmethod

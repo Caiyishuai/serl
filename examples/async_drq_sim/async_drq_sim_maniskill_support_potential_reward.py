@@ -39,7 +39,7 @@ from absl import app, flags
 from flax.training import checkpoints
 import cv2
 import os
-
+os.environ["WANDB_API_KEY"] = "5f07bbe343d183f389c30a3a6245463dca80ae0e"
 from typing import Any, Dict, Optional
 import pickle as pkl
 import gymnasium as gym
@@ -68,15 +68,16 @@ from serl_launcher.wrappers.serl_obs_wrappers import SERLObsWrapper
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("env", "PlaceSphere-v1", "Name of environment.")
+flags.DEFINE_string("env", "PokeCube-v1", "Name of environment.")
 flags.DEFINE_string("obs_mode", "rgb+state", "Observation mode for ManiSkill environment.")
 flags.DEFINE_string("control_mode", "pd_ee_delta_pose", "Control mode for ManiSkill environment.")
 flags.DEFINE_string("robot_uids", "panda_wristcam", "Robot UIDs for ManiSkill environment.")
+flags.DEFINE_string("reward_mode", "normalized_dense", "Reward mode for ManiSkill environment (dense or sparse).normalized_dense")
 flags.DEFINE_string("agent", "drq", "Name of agent.")
 flags.DEFINE_string("exp_name", None, "Name of the experiment for wandb logging.")
 flags.DEFINE_integer("max_traj_length", 1000, "Maximum length of trajectory.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
-flags.DEFINE_bool("save_model", False, "Whether to save model.")
+flags.DEFINE_bool("save_model", True, "Whether to save model.")
 flags.DEFINE_integer("batch_size", 256, "Batch size.")
 flags.DEFINE_integer("critic_actor_ratio", 4, "critic to actor update ratio.")
 
@@ -89,7 +90,7 @@ flags.DEFINE_integer("steps_per_update", 30, "Number of steps per update the ser
 
 flags.DEFINE_integer("log_period", 10, "Logging period.")
 flags.DEFINE_integer("eval_period", 2000, "Evaluation period.")
-flags.DEFINE_integer("eval_n_trajs", 5, "Number of trajectories for evaluation.")
+flags.DEFINE_integer("eval_n_trajs", 10, "Number of trajectories for evaluation.")
 
 # flag to indicate if this is a leaner or a actor
 flags.DEFINE_boolean("learner", False, "Is this a learner or a trainer.")
@@ -99,7 +100,7 @@ flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 # "small" is a 4 layer convnet, "resnet" and "mobilenet" are frozen with pretrained weights
 flags.DEFINE_string("encoder_type", "resnet-pretrained", "Encoder type.")
 # flags.DEFINE_string("demo_path", "/home/caiyishuai/workspace/maniskill-ws/serl_data/mani_skill_place_sphere_100.pkl", "Path to the demo data.")
-flags.DEFINE_string("demo_path", None, "Path to the demo data.")
+flags.DEFINE_string("demo_path", "/home/caiyishuai/workspace/maniskill-ws/serl_data/mani_skill_poke_cube_normalized_dense_pbr_no_clip_100_fixed_complete.pkl", "Path to the demo data.")
 flags.DEFINE_integer("checkpoint_period", 0, "Period to save checkpoints.")
 flags.DEFINE_string("checkpoint_path", None, "Path to save checkpoints.")
 
@@ -114,6 +115,57 @@ devices = jax.local_devices()
 num_devices = len(devices)
 sharding = jax.sharding.PositionalSharding(devices)
 
+class PotentialBasedRewardWrapper(gym.Wrapper):
+    """Undo potential-based reward shaping from ManiSkill dense rewards.
+
+    ManiSkill's (normalized_)dense reward r(s) is a state-dependent potential φ(s).
+    This wrapper converts it to difference-based reward:
+        r_new(t) = φ(s_{t+1}) - φ(s_t)
+    which is equivalent to PBRS with γ=1 and preserves the optimal policy under
+    the true (sparse) reward while providing a richer learning signal.
+    """
+
+    def __init__(self, env):
+        super().__init__(env)
+        self._prev_potential = 0.0
+
+    def _compute_potential_at_current_state(self):
+        """Compute φ(s) at the current env state without stepping."""
+        base = self.env.unwrapped
+        try:
+            import torch as _torch
+            eval_info = base.evaluate()
+            obs = base.get_obs()
+            zero_action = _torch.zeros(
+                base.action_space.shape, dtype=_torch.float32
+            )
+            r = base.get_reward(obs=obs, action=zero_action, info=eval_info)
+            if _torch.is_tensor(r):
+                return float(r.cpu().item() if r.numel() == 1 else r.cpu().numpy().flat[0])
+            return float(r)
+        except Exception as e:
+            print(f"[PotentialBasedRewardWrapper] Cannot compute potential: {e}, using 0.0")
+            return 0.0
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self._prev_potential = self._compute_potential_at_current_state()
+        return obs, info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        if hasattr(reward, "cpu"):
+            current_potential = float(
+                reward.cpu().item() if reward.numel() == 1 else reward.cpu().numpy().flat[0]
+            )
+        else:
+            current_potential = float(reward)
+
+        shaped_reward = current_potential - self._prev_potential
+        info["raw_potential"] = current_potential
+        info["prev_potential"] = self._prev_potential
+        self._prev_potential = current_potential
+        return obs, shaped_reward, terminated, truncated, info
 
 def print_green(x):
     return print("\033[92m {}\033[00m".format(x))
@@ -176,12 +228,15 @@ def actor(agent: DrQAgent, data_store, env, sampling_rng):
 
     # Create evaluation environment
     import gymnasium
-    eval_env = gymnasium.make(
-        FLAGS.env,
+    eval_env_kwargs = dict(
         obs_mode=FLAGS.obs_mode,
         control_mode=FLAGS.control_mode,
         robot_uids=FLAGS.robot_uids,
     )
+    if FLAGS.reward_mode == "sparse":
+        eval_env_kwargs["reward_mode"] = FLAGS.reward_mode
+    eval_env = gymnasium.make(FLAGS.env, **eval_env_kwargs)
+
     
     # ManiSkill multi-camera wrapper
     import torch
@@ -258,9 +313,11 @@ def actor(agent: DrQAgent, data_store, env, sampling_rng):
                         obs_dict[cam_name] = rgb_data.astype(np.uint8)
             return obs_dict
     
+    eval_env = PotentialBasedRewardWrapper(eval_env)
     eval_env = ManiSkillMultiCameraWrapper(eval_env)
     eval_env = ChunkingWrapper(eval_env, obs_horizon=1, act_exec_horizon=None)
     eval_env = RecordEpisodeStatistics(eval_env)
+    
 
     obs, _ = env.reset()
     done = False
@@ -349,7 +406,7 @@ def learner(
     """
     # set up wandb and logging
     wandb_logger = make_wandb_logger(
-        project="maniskill_serl",
+        project="maniskill_serl_pbr",
         description=FLAGS.exp_name or FLAGS.env,
         debug=FLAGS.debug,
     )
@@ -461,7 +518,7 @@ def learner(
         if FLAGS.checkpoint_period and update_steps % FLAGS.checkpoint_period == 0:
             assert FLAGS.checkpoint_path is not None
             checkpoints.save_checkpoint(
-                FLAGS.checkpoint_path, agent.state, step=update_steps, keep=20
+                FLAGS.checkpoint_path, agent.state, step=update_steps, keep=20, overwrite=True
             )
 
         pbar.update(len(replay_buffer) - pbar.n)  # update replay buffer bar
@@ -479,21 +536,16 @@ def main(_):
 
     # create env and load dataset
     import gymnasium
+    env_kwargs = dict(
+        obs_mode=FLAGS.obs_mode,
+        control_mode=FLAGS.control_mode,
+        robot_uids=FLAGS.robot_uids,
+    )
+    if FLAGS.reward_mode == "sparse":
+        env_kwargs["reward_mode"] = FLAGS.reward_mode
     if FLAGS.render:
-        env = gymnasium.make(
-            FLAGS.env,
-            obs_mode=FLAGS.obs_mode,
-            control_mode=FLAGS.control_mode,
-            robot_uids=FLAGS.robot_uids,
-            render_mode="human"
-        )
-    else:
-        env = gymnasium.make(
-            FLAGS.env,
-            obs_mode=FLAGS.obs_mode,
-            control_mode=FLAGS.control_mode,
-            robot_uids=FLAGS.robot_uids,
-        )
+        env_kwargs["render_mode"] = "human"
+    env = gymnasium.make(FLAGS.env, **env_kwargs)
     # envs = gym.make(args.env_id, num_envs=args.num_envs if not args.evaluate else 1, reconfiguration_freq=args.reconfiguration_freq, **env_kwargs)
 
     # ManiSkill multi-camera wrapper
@@ -571,8 +623,10 @@ def main(_):
                         obs_dict[cam_name] = rgb_data.astype(np.uint8)
             return obs_dict
     
+    env = PotentialBasedRewardWrapper(env)
     env = ManiSkillMultiCameraWrapper(env)
     env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
+   
 
     # Determine image keys based on observation space
     image_keys = [key for key in env.observation_space.keys() if key != "state"]

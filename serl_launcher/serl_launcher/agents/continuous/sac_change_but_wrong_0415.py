@@ -328,6 +328,7 @@ class SACAgent(flax.struct.PyTreeNode):
             info["curr_tau"] = new_tau
             # Update target network with current tau
             new_state = new_state.target_update(new_tau)
+            # new_state = new_state.target_update(self.tau)
 
         # Update RNG
         rng, _ = jax.random.split(self.state.rng)

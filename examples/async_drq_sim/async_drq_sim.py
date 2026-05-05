@@ -152,9 +152,9 @@ def actor(agent: DrQAgent, data_store, env, sampling_rng):
     client.recv_network_callback(update_params)
 
     eval_env = gym.make(FLAGS.env)
-    if FLAGS.env == "PandaPickCube-v0" or FLAGS.env == "PandaStack-v0":
+    if FLAGS.env in ("PandaPickCube-v0", "PandaStack-v0", "PandaInsert-v0"):
         eval_env = gym.wrappers.FlattenObservation(eval_env)
-    if FLAGS.env == "PandaPickCubeVision-v0" or FLAGS.env == "PandaStackVision-v0":
+    if FLAGS.env in ("PandaPickCubeVision-v0", "PandaStackVision-v0", "PandaInsertVision-v0"):
         eval_env = SERLObsWrapper(eval_env)
         eval_env = ChunkingWrapper(eval_env, obs_horizon=1, act_exec_horizon=None)
     eval_env = RecordEpisodeStatistics(eval_env)
@@ -432,9 +432,9 @@ def main(_):
     else:
         env = gym.make(FLAGS.env)
 
-    if FLAGS.env == "PandaPickCube-v0" or FLAGS.env == "PandaStack-v0":
+    if FLAGS.env in ("PandaPickCube-v0", "PandaStack-v0", "PandaInsert-v0"):
         env = gym.wrappers.FlattenObservation(env)
-    if FLAGS.env == "PandaPickCubeVision-v0" or FLAGS.env == "PandaStackVision-v0":
+    if FLAGS.env in ("PandaPickCubeVision-v0", "PandaStackVision-v0", "PandaInsertVision-v0"):
         env = SERLObsWrapper(env)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
 

@@ -50,7 +50,13 @@ class DrQAgent(SACAgent):
         critic_ensemble_size: int = 2,
         critic_subsample_size: Optional[int] = None,
         image_keys: Iterable[str] = ("image",),
-        reward_bias: float = 0.0,
+        # Adaptive tau config
+        adaptive_tau_enabled: bool = False,
+        critic_loss_threshold: float = 0.3,
+        tau_min: float = 0.005,
+        tau_max: float = 0.2,
+        tau_adjust_factor: float = 1.2,
+        tau_adjust_tolerance: float = 0.4,
     ):
         networks = {
             "actor": actor_def,
@@ -99,8 +105,14 @@ class DrQAgent(SACAgent):
                 target_entropy=target_entropy,
                 backup_entropy=backup_entropy,
                 image_keys=image_keys,
-                reward_bias=reward_bias,
+                adaptive_tau_enabled=adaptive_tau_enabled,
+                critic_loss_threshold=critic_loss_threshold,
+                tau_min=tau_min,
+                tau_max=tau_max,
+                tau_adjust_factor=tau_adjust_factor,
+                tau_adjust_tolerance=tau_adjust_tolerance,
             ),
+            tau=soft_target_update_rate,  # Initialize tau with soft_target_update_rate
         )
 
     @classmethod
@@ -127,7 +139,6 @@ class DrQAgent(SACAgent):
         critic_subsample_size: Optional[int] = None,
         temperature_init: float = 1.0,
         image_keys: Iterable[str] = ("image",),
-        reward_bias: float = 0.0,
         **kwargs,
     ):
         """
@@ -234,8 +245,7 @@ class DrQAgent(SACAgent):
             critic_ensemble_size=critic_ensemble_size,
             critic_subsample_size=critic_subsample_size,
             image_keys=image_keys,
-            reward_bias=reward_bias,
-            **kwargs,
+            **kwargs,  # This will pass through adaptive tau parameters
         )
 
         if encoder_type == "resnet-pretrained":  # load pretrained weights for ResNet-10

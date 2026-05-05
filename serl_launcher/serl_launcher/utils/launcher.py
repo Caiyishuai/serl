@@ -2,26 +2,97 @@
 
 import jax
 from jax import nn
-import jax.numpy as jnp
+
+from typing import Optional
+import tensorflow_datasets as tfds
 
 from agentlace.trainer import TrainerConfig
+from agentlace.data.tfds import populate_datastore
 
-from serl_launcher.common.typing import Batch, PRNGKey
 from serl_launcher.common.wandb import WandBLogger
 from serl_launcher.agents.continuous.bc import BCAgent
 from serl_launcher.agents.continuous.sac import SACAgent
-from serl_launcher.agents.continuous.sac_hybrid_single import SACAgentHybridSingleArm
-from serl_launcher.agents.continuous.sac_hybrid_dual import SACAgentHybridDualArm
-from serl_launcher.vision.data_augmentations import batched_random_crop
+from serl_launcher.agents.continuous.drq import DrQAgent
+from serl_launcher.agents.continuous.vice import VICEAgent
+
 from serl_launcher.data.data_store import (
     MemoryEfficientReplayBufferDataStore,
     ReplayBufferDataStore,
 )
-from serl_launcher.agents.continuous.drq import DrQAgent
 
-from typing import Optional
-import tensorflow_datasets as tfds
 ##############################################################################
+
+
+def make_bc_agent(
+    seed, sample_obs, sample_action, image_keys=("image",), encoder_type="small"
+):
+    return BCAgent.create(
+        jax.random.PRNGKey(seed),
+        sample_obs,
+        sample_action,
+        network_kwargs={
+            "activations": nn.tanh,
+            "use_layer_norm": False,
+            "hidden_dims": [256, 256],
+        },
+        policy_kwargs={
+            "tanh_squash_distribution": False,
+            "std_parameterization": "exp",
+            "std_min": 1e-5,
+            "std_max": 5,
+        },
+        use_proprio=True,
+        encoder_type=encoder_type,
+        image_keys=image_keys,
+    )
+
+
+def make_sac_agent(
+    seed,
+    sample_obs,
+    sample_action,
+    discount=0.99,
+    # Adaptive tau parameters
+    adaptive_tau_enabled=False,
+    critic_loss_threshold=0.3,
+    tau_min=0.005,
+    tau_max=0.2,
+    tau_adjust_factor=1.2,
+    tau_adjust_tolerance=0.4,
+    backup_entropy=False,
+):
+    return SACAgent.create_states(
+        jax.random.PRNGKey(seed),
+        sample_obs,
+        sample_action,
+        policy_kwargs={
+            "tanh_squash_distribution": True,
+            "std_parameterization": "exp",
+            "std_min": 1e-5,
+            "std_max": 5,
+        },
+        critic_network_kwargs={
+            "activations": nn.tanh,
+            "use_layer_norm": True,
+            "hidden_dims": [256, 256],
+        },
+        policy_network_kwargs={
+            "activations": nn.tanh,
+            "use_layer_norm": True,
+            "hidden_dims": [256, 256],
+        },
+        temperature_init=1e-2,
+        discount=discount,
+        backup_entropy=backup_entropy,
+        critic_ensemble_size=10,
+        critic_subsample_size=2,
+        adaptive_tau_enabled=adaptive_tau_enabled,
+        critic_loss_threshold=critic_loss_threshold,
+        tau_min=tau_min,
+        tau_max=tau_max,
+        tau_adjust_factor=tau_adjust_factor,
+        tau_adjust_tolerance=tau_adjust_tolerance,
+    )
 
 
 def make_drq_agent(
@@ -31,7 +102,13 @@ def make_drq_agent(
     image_keys=("image",),
     encoder_type="small",
     discount=0.96,
-    reward_bias=0.0,
+    # Adaptive tau parameters
+    adaptive_tau_enabled=False,
+    critic_loss_threshold=0.05,
+    tau_min=0.001,
+    tau_max=0.05,
+    tau_adjust_factor=1.1,
+    tau_adjust_tolerance=0.2,
 ):
     agent = DrQAgent.create_drq(
         jax.random.PRNGKey(seed),
@@ -40,7 +117,6 @@ def make_drq_agent(
         encoder_type=encoder_type,
         use_proprio=True,
         image_keys=image_keys,
-        reward_bias=reward_bias,
         policy_kwargs={
             "tanh_squash_distribution": True,
             "std_parameterization": "exp",
@@ -62,8 +138,98 @@ def make_drq_agent(
         backup_entropy=False,
         critic_ensemble_size=10,
         critic_subsample_size=2,
+        # Adaptive tau config
+        adaptive_tau_enabled=adaptive_tau_enabled,
+        critic_loss_threshold=critic_loss_threshold,
+        tau_min=tau_min,
+        tau_max=tau_max,
+        tau_adjust_factor=tau_adjust_factor,
+        tau_adjust_tolerance=tau_adjust_tolerance,
     )
     return agent
+
+
+def make_vice_agent(
+    seed,
+    sample_obs,
+    sample_action,
+    sample_vice_obs,
+    image_keys=("image",),
+    vice_image_keys=("image",),
+    encoder_type="small",
+    discount=0.96,
+):
+    agent = VICEAgent.create_vice(
+        jax.random.PRNGKey(seed),
+        sample_obs,
+        sample_action,
+        sample_vice_obs,
+        encoder_type=encoder_type,
+        use_proprio=True,
+        image_keys=image_keys,
+        vice_image_keys=vice_image_keys,
+        policy_kwargs={
+            "tanh_squash_distribution": True,
+            "std_parameterization": "exp",
+            "std_min": 1e-5,
+            "std_max": 5,
+        },
+        critic_network_kwargs={
+            "activations": nn.tanh,
+            "use_layer_norm": True,
+            "hidden_dims": [256, 256],
+        },
+        vice_network_kwargs={
+            "activations": nn.leaky_relu,
+            "use_layer_norm": True,
+            "hidden_dims": [
+                256,
+            ],
+            "dropout_rate": 0.1,
+        },
+        policy_network_kwargs={
+            "activations": nn.tanh,
+            "use_layer_norm": True,
+            "hidden_dims": [256, 256],
+        },
+        temperature_init=1e-2,
+        discount=discount,
+        backup_entropy=False,
+        critic_ensemble_size=10,
+        critic_subsample_size=2,
+    )
+    return agent
+
+
+def make_trainer_config(port_number: int = 5488, broadcast_port: int = 5489):
+    return TrainerConfig(
+        port_number=port_number,
+        broadcast_port=broadcast_port,
+        request_types=["send-stats"],
+        # experimental_pipeline_port=5547, # experimental ds update
+    )
+
+
+def make_wandb_logger(
+    project: str = "agentlace",
+    description: str = "serl_launcher",
+    debug: bool = False,
+):
+    wandb_config = WandBLogger.get_default_config()
+    wandb_config.update(
+        {
+            "project": project,
+            "exp_descriptor": description,
+            "tag": description,
+        }
+    )
+    wandb_logger = WandBLogger(
+        wandb_config=wandb_config,
+        variant={},
+        debug=debug,
+    )
+    return wandb_logger
+
 
 def make_replay_buffer(
     env,
@@ -111,12 +277,14 @@ def make_replay_buffer(
             env.observation_space,
             env.action_space,
             capacity=capacity,
+            rlds_logger=rlds_logger,
         )
     elif type == "memory_efficient_replay_buffer":
         replay_buffer = MemoryEfficientReplayBufferDataStore(
             env.observation_space,
             env.action_space,
             capacity=capacity,
+            rlds_logger=rlds_logger,
             image_keys=image_keys,
         )
     else:
@@ -135,244 +303,76 @@ def make_replay_buffer(
 
     return replay_buffer
 
-
-def make_bc_agent(
-    seed, 
-    sample_obs, 
-    sample_action, 
-    image_keys=("image",), 
-    encoder_type="resnet-pretrained"
+def make_replay_buffer_from_spaces(
+    observation_space,
+    action_space,
+    capacity: int = 1000000,
+    rlds_logger_path: Optional[str] = None,
+    type: str = "replay_buffer",
+    image_keys: list = [],  # used only type=="memory_efficient_replay_buffer"
+    preload_rlds_path: Optional[str] = None,
+    preload_data_transform: Optional[callable] = None,
 ):
-    return BCAgent.create(
-        jax.random.PRNGKey(seed),
-        sample_obs,
-        sample_action,
-        network_kwargs={
-            "activations": nn.tanh,
-            "use_layer_norm": True,
-            "hidden_dims": [512, 512, 512],
-            "dropout_rate": 0.25,
-        },
-        policy_kwargs={
-            "tanh_squash_distribution": False,
-            "std_parameterization": "exp",
-            "std_min": 1e-5,
-            "std_max": 5,
-        },
-        use_proprio=True,
-        encoder_type=encoder_type,
-        image_keys=image_keys,
-        augmentation_function=make_batch_augmentation_func(image_keys),
-    )
+    """
+    This is the high-level helper function to
+    create a replay buffer for the given observation and action spaces.
 
+    Args:
+    - observation_space: gym or gymasium observation space
+    - action_space: gym or gymasium action space
+    - capacity: capacity of the replay buffer
+    - rlds_logger_path: path to save RLDS logs
+    - type: support only for "replay_buffer" and "memory_efficient_replay_buffer"
+    - image_keys: list of image keys, used only "memory_efficient_replay_buffer"
+    - preload_rlds_path: path to preloaded RLDS trajectories
+    - preload_data_transform: data transformation function for preloaded RLDS data
+    """
+    print("shape of observation space and action space")
+    print(observation_space)
+    print(action_space)
 
-def make_sac_pixel_agent(
-    seed,
-    sample_obs,
-    sample_action,
-    image_keys=("image",),
-    encoder_type="resnet-pretrained",
-    reward_bias=0.0,
-    target_entropy=None,
-    discount=0.97,
-):
-    agent = SACAgent.create_pixels(
-        jax.random.PRNGKey(seed),
-        sample_obs,
-        sample_action,
-        encoder_type=encoder_type,
-        use_proprio=True,
-        image_keys=image_keys,
-        policy_kwargs={
-            "tanh_squash_distribution": True,
-            "std_parameterization": "exp",
-            "std_min": 1e-5,
-            "std_max": 5,
-        },
-        critic_network_kwargs={
-            "activations": nn.tanh,
-            "use_layer_norm": True,
-            "hidden_dims": [256, 256],
-        },
-        policy_network_kwargs={
-            "activations": nn.tanh,
-            "use_layer_norm": True,
-            "hidden_dims": [256, 256],
-        },
-        temperature_init=1e-2,
-        discount=discount,
-        backup_entropy=False,
-        critic_ensemble_size=2,
-        critic_subsample_size=None,
-        reward_bias=reward_bias,
-        target_entropy=target_entropy,
-        augmentation_function=make_batch_augmentation_func(image_keys),
-    )
-    return agent
+    # init logger for RLDS
+    if rlds_logger_path:
+        # from: https://github.com/rail-berkeley/oxe_envlogger
+        from oxe_envlogger.rlds_logger import RLDSLogger
 
-
-def make_sac_pixel_agent_hybrid_single_arm(
-    seed,
-    sample_obs,
-    sample_action,
-    image_keys=("image",),
-    encoder_type="resnet-pretrained",
-    reward_bias=0.0,
-    target_entropy=None,
-    discount=0.97,
-):
-    agent = SACAgentHybridSingleArm.create_pixels(
-        jax.random.PRNGKey(seed),
-        sample_obs,
-        sample_action,
-        encoder_type=encoder_type,
-        use_proprio=True,
-        image_keys=image_keys,
-        policy_kwargs={
-            "tanh_squash_distribution": True,
-            "std_parameterization": "exp",
-            "std_min": 1e-5,
-            "std_max": 5,
-        },
-        critic_network_kwargs={
-            "activations": nn.tanh,
-            "use_layer_norm": True,
-            "hidden_dims": [256, 256],
-        },
-        grasp_critic_network_kwargs={
-            "activations": nn.tanh,
-            "use_layer_norm": True,
-            "hidden_dims": [256, 256],
-        },
-        policy_network_kwargs={
-            "activations": nn.tanh,
-            "use_layer_norm": True,
-            "hidden_dims": [256, 256],
-        },
-        temperature_init=1e-2,
-        discount=discount,
-        backup_entropy=False,
-        critic_ensemble_size=2,
-        critic_subsample_size=None,
-        reward_bias=reward_bias,
-        target_entropy=target_entropy,
-        augmentation_function=make_batch_augmentation_func(image_keys),
-    )
-    return agent
-
-
-def make_sac_pixel_agent_hybrid_dual_arm(
-    seed,
-    sample_obs,
-    sample_action,
-    image_keys=("image",),
-    encoder_type="resnet-pretrained",
-    reward_bias=0.0,
-    target_entropy=None,
-    discount=0.97,
-):
-    agent = SACAgentHybridDualArm.create_pixels(
-        jax.random.PRNGKey(seed),
-        sample_obs,
-        sample_action,
-        encoder_type=encoder_type,
-        use_proprio=True,
-        image_keys=image_keys,
-        policy_kwargs={
-            "tanh_squash_distribution": True,
-            "std_parameterization": "exp",
-            "std_min": 1e-5,
-            "std_max": 5,
-        },
-        critic_network_kwargs={
-            "activations": nn.tanh,
-            "use_layer_norm": True,
-            "hidden_dims": [256, 256],
-        },
-        grasp_critic_network_kwargs={
-            "activations": nn.tanh,
-            "use_layer_norm": True,
-            "hidden_dims": [256, 256],
-        },
-        policy_network_kwargs={
-            "activations": nn.tanh,
-            "use_layer_norm": True,
-            "hidden_dims": [256, 256],
-        },
-        temperature_init=1e-2,
-        discount=discount,
-        backup_entropy=False,
-        critic_ensemble_size=2,
-        critic_subsample_size=None,
-        reward_bias=reward_bias,
-        target_entropy=target_entropy,
-        augmentation_function=make_batch_augmentation_func(image_keys),
-    )
-    return agent
-
-
-def linear_schedule(step):
-    init_value = 10.0
-    end_value = 50.0
-    decay_steps = 15_000
-
-
-    linear_step = jnp.minimum(step, decay_steps)
-    decayed_value = init_value + (end_value - init_value) * (linear_step / decay_steps)
-    return decayed_value
-    
-def make_batch_augmentation_func(image_keys) -> callable:
-
-    def data_augmentation_fn(rng, observations):
-        for pixel_key in image_keys:
-            observations = observations.copy(
-                add_or_replace={
-                    pixel_key: batched_random_crop(
-                        observations[pixel_key], rng, padding=4, num_batch_dims=2
-                    )
-                }
-            )
-        return observations
-    
-    def augment_batch(batch: Batch, rng: PRNGKey) -> Batch:
-        rng, obs_rng, next_obs_rng = jax.random.split(rng, 3)
-        obs = data_augmentation_fn(obs_rng, batch["observations"])
-        next_obs = data_augmentation_fn(next_obs_rng, batch["next_observations"])
-        batch = batch.copy(
-            add_or_replace={
-                "observations": obs,
-                "next_observations": next_obs,
-            }
+        rlds_logger = RLDSLogger(
+            observation_space=observation_space,
+            action_space=action_space,
+            dataset_name="serl_rlds_dataset",
+            directory=rlds_logger_path,
+            max_episodes_per_file=5,  # TODO: arbitrary number
         )
-        return batch
-    
-    return augment_batch
+    else:
+        rlds_logger = None
 
+    if type == "replay_buffer":
+        replay_buffer = ReplayBufferDataStore(
+            observation_space,
+            action_space,
+            capacity=capacity,
+            rlds_logger=rlds_logger,
+        )
+    elif type == "memory_efficient_replay_buffer":
+        replay_buffer = MemoryEfficientReplayBufferDataStore(
+            observation_space,
+            action_space,
+            capacity=capacity,
+            rlds_logger=rlds_logger,
+            image_keys=image_keys,
+        )
+    else:
+        raise ValueError(f"Unsupported replay_buffer_type: {type}")
 
-def make_trainer_config(port_number: int = 5588, broadcast_port: int = 5589):
-    return TrainerConfig(
-        port_number=port_number,
-        broadcast_port=broadcast_port,
-        request_types=["send-stats"],
-    )
+    if preload_rlds_path:
+        print(f" - Preloaded {preload_rlds_path} to replay buffer")
+        dataset = tfds.builder_from_directory(preload_rlds_path).as_dataset(split="all")
+        populate_datastore(
+            replay_buffer,
+            dataset,
+            data_transform=preload_data_transform,
+            type="with_dones",
+        )
+        print(f" - done populated {len(replay_buffer)} samples to replay buffer")
 
-
-def make_wandb_logger(
-    project: str = "hil-serl",
-    description: str = "serl_launcher",
-    debug: bool = False,
-):
-    wandb_config = WandBLogger.get_default_config()
-    wandb_config.update(
-        {
-            "project": project,
-            "exp_descriptor": description,
-            "tag": description,
-        }
-    )
-    wandb_logger = WandBLogger(
-        wandb_config=wandb_config,
-        variant={},
-        debug=debug,
-    )
-    return wandb_logger
+    return replay_buffer

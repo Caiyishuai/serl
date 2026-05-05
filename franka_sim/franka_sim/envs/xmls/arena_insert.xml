@@ -1,0 +1,82 @@
+<mujoco model="InsertArena">
+  <include file="panda_insert.xml"/>
+
+  <option timestep=".002" noslip_iterations="5" noslip_tolerance="0"/>
+
+  <statistic center="0.35 0 0.4" extent=".8"/>
+
+  <visual>
+    <headlight diffuse=".4 .4 .4" ambient=".5 .5 .5"/>
+    <global azimuth="160" elevation="-20" offheight="128" offwidth="128"/>
+    <quality offsamples="8"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1=".3 .5 .7" rgb2="0 0 0" width="32" height="512"/>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="2 2" texuniform="true" reflectance="0"/>
+    <!-- STL meshes: 红插头 (red plug), 绿插座 (green socket) -->
+    <!-- scale="0.001 0.001 0.001" converts mm -> m (typical CAD export unit) -->
+    <mesh name="red_plug_mesh"    file="红插头.STL"   scale="0.001 0.001 0.001"/>
+    <mesh name="green_socket_mesh" file="绿插座.STL"  scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <worldbody>
+    <camera name="front" pos="1.3 0.0 0.8" quat="0.5963678 0.3799282 0.3799282 0.5963678" fovy="45"/>
+    <light pos="0 0 3" dir="0 0 -1" diffuse="1 1 1" specular=".3 .3 .3"/>
+    <light pos="0.4 0 1.0" mode="targetbodycom" target="socket" diffuse=".8 .8 .8" specular=".3 .3 .3"/>
+    <geom name="floor" size="3 3 0.01" type="plane" material="grid"/>
+
+    <!-- ================================================================
+         Green socket (绿插座): placed directly on the floor, free-jointed
+         so we can randomise its XY position at reset.  Heavy mass keeps
+         it stable.  Two rectangular holes side-by-side in X at ±23mm,
+         each ~29mm(X)×22mm(Y), 50mm deep.  Opening site at top (Z=50mm).
+         ================================================================ -->
+    <body name="socket" pos="0.4 0 0.002">
+      <freejoint name="socket_joint"/>
+      <!-- Visual mesh (now correctly centered and oriented: X±48mm, Y±29mm, Z 0-50mm) -->
+      <geom name="socket_visual" type="mesh" mesh="green_socket_mesh"
+            rgba="0.1 0.8 0.15 1" contype="0" conaffinity="0" group="2"/>
+      <!-- Two-hole collision proxy – gives the socket mass and the correct wall geometry.
+           Socket outer: 96.6mm×57.5mm×50mm.  Two holes side-by-side in X at ±23mm.
+           Hole size ≈ 29mm(X) × 22mm(Y), separated by 17mm center divider. -->
+      <!-- Outer left wall  (X: -48 to -38, full Y, full Z) -->
+      <geom name="sock_wall_ol" type="box" size="0.005 0.0287 0.025"
+            pos="-0.0433 0 0.025" rgba="0.1 0.8 0.15 0" mass="0.2"/>
+      <!-- Outer right wall (X: +38 to +48, full Y, full Z) -->
+      <geom name="sock_wall_or" type="box" size="0.005 0.0287 0.025"
+            pos=" 0.0433 0 0.025" rgba="0.1 0.8 0.15 0" mass="0.2"/>
+      <!-- Center divider  (X: -9 to +9, hole depth Y, full Z) -->
+      <geom name="sock_wall_cd" type="box" size="0.0086 0.011 0.025"
+            pos="0 0 0.025" rgba="0.1 0.8 0.15 0" mass="0.2"/>
+      <!-- Front wall (full X, Y: +11 to +29, full Z) -->
+      <geom name="sock_wall_f" type="box" size="0.0483 0.009 0.025"
+            pos="0 0.0197 0.025" rgba="0.1 0.8 0.15 0" mass="0.4"/>
+      <!-- Back wall  (full X, Y: -29 to -11, full Z) -->
+      <geom name="sock_wall_b" type="box" size="0.0483 0.009 0.025"
+            pos="0 -0.0197 0.025" rgba="0.1 0.8 0.15 0" mass="0.4"/>
+      <!-- Bottom plate (full footprint, Z: 0 to 3mm) -->
+      <geom name="sock_bottom" type="box" size="0.0483 0.0287 0.0015"
+            pos="0 0 0.0015" rgba="0.05 0.6 0.1 1" mass="1.0"/>
+      <!-- Opening site: top of the socket hole (Z = 50 mm) -->
+      <site name="socket_opening" pos="0 0 0.050" size="0.005" rgba="0 1 0.3 1"/>
+    </body>
+
+    <!-- Invisible target helper for visualising goal (can be used in reward shaping) -->
+    <body name="target" pos=".4 0 .5" quat="0 1 0 0" mocap="true">
+      <geom name="target" type="sphere" size=".008" contype="0" conaffinity="0"
+            rgba=".9 .9 .1 0.25"/>
+    </body>
+  </worldbody>
+
+  <sensor>
+    <!-- Connector insertion tip (world position) -->
+    <framepos name="connector_tip_pos"    objtype="site" objname="connector_tip"/>
+    <!-- Socket opening centre (world position, = insertion target) -->
+    <framepos name="socket_opening_pos"  objtype="site" objname="socket_opening"/>
+    <!-- Whole socket body position (used in observation) -->
+    <framepos name="socket_pos"           objtype="body" objname="socket"/>
+    <!-- Gripper pinch (inherited from panda.xml, convenient alias) -->
+  </sensor>
+</mujoco>
