@@ -1,0 +1,33 @@
+# SERL 离线训练 GPU 机依赖锁定（从 mac CPU venv 验证过的版本对齐而来）
+# 用途：H20 / CUDA 12 / Linux x86_64 机器上重建 SERL 训练环境
+#
+# 用法（见同目录 setup_gpu_env.sh）：
+#   1) 先装 jax GPU 版（不在本文件里，因为要带 CUDA extra，见脚本）
+#   2) pip install -r requirements-gpu.txt
+#   3) pip install -e /path/to/serl/serl_launcher
+#
+# ⚠️ 关键红线：绝对不要装 tensorflow —— 会把 numpy 降到 <2、ml_dtypes 降到 0.3，摧毁 jax。
+#    训练脚本顶部已注入 tensorflow / agentlace stub，无需真的装它们。
+
+# ---- 数值/科学计算核心（版本必须锁死，jax 生态强耦合）----
+numpy==2.1.3
+ml_dtypes==0.5.0
+
+# ---- JAX 生态（jax/jaxlib 由 setup_gpu_env.sh 单独装 GPU 版，此处不写死 jaxlib）----
+flax==0.8.5
+optax==0.2.3
+distrax==0.1.5
+chex==0.1.87
+orbax-checkpoint==0.6.4
+
+# ---- RL / env ----
+gymnasium==0.29.1
+gym==0.26.2
+mujoco==3.1.6
+tensorflow-probability==0.24.0
+
+# ---- 画图 / 日志（纯 python，不动 jax）----
+matplotlib
+wandb
+
+# 注：serl_launcher 与 franka_sim 为本地 editable 安装，不写在这里，见脚本。

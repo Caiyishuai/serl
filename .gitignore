@@ -204,3 +204,7 @@ tools/data/
 examples/openpi/
 examples/others/
 examples/*.zip
+
+# auto_research: 排除虚拟环境 (代码/文档/曲线数据仍上传, data/*.pkl 已由上方规则忽略)
+auto_research/venv_serl/
+auto_research/venv_*/

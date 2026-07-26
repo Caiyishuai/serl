@@ -1,0 +1,18 @@
+task | reward | tau      | final_critic_loss | bc_action_mse | wall | status
+-----|--------|----------|-------------------|---------------|------|-------
+pushcube     | dense  | fixed    | 0.3612            | 0.6574        | 22.3s | OK
+pushcube     | dense  | adaptive | 0.3128            | 0.6533        | 22.0s | OK
+pushcube     | sparse | fixed    | 0.5863            | 0.7641        | 19.2s | OK
+pushcube     | sparse | adaptive | 0.2808            | 2.4768        | 21.1s | OK
+pickcube     | dense  | fixed    | 1.4296            | 0.6979        | 24.9s | OK
+pickcube     | dense  | adaptive | 1.3253            | 0.7210        | 35.0s | OK
+pickcube     | sparse | fixed    | 0.8488            | 0.8835        | 34.3s | OK
+pickcube     | sparse | adaptive | 0.1359            | 0.9152        | 36.4s | OK
+stackcube    | dense  | fixed    | 12.8680           | 0.6944        | 33.7s | OK
+stackcube    | dense  | adaptive | 11.5448           | 0.7400        | 44.7s | OK
+stackcube    | sparse | fixed    | 0.3996            | 0.7597        | 37.7s | OK
+stackcube    | sparse | adaptive | 0.4322            | 0.8243        | 41.3s | OK
+pullcubetool | dense  | fixed    | 2.6130            | 0.8151        | 37.6s | OK
+pullcubetool | dense  | adaptive | 5.0442            | 0.7879        | 35.2s | OK
+pullcubetool | sparse | fixed    | 0.0303            | 2.0163        | 33.4s | OK
+pullcubetool | sparse | adaptive | 0.0411            | 1.0150        | 32.5s | OK
